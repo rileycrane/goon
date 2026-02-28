@@ -21,6 +21,7 @@ class Settings:
     # Vapi
     vapi_api_key: str = os.getenv("VAPI_API_KEY", "")
     vapi_phone_number_id: str = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+    vapi_assistant_id: str = os.getenv("VAPI_ASSISTANT_ID", "")
 
     # LLM
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
