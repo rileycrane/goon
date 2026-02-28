@@ -4,7 +4,11 @@
 .beads/
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 .pytest_cache/
+*.egg-info/
 data/
 .env
+.vscode/
+.idea/
