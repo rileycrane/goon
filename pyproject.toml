@@ -1,0 +1,25 @@
+[project]
+name = "goon"
+version = "0.1.0"
+description = "AI concierge that handles calls and errands via SMS"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "aiosqlite>=0.20",
+    "anthropic>=0.43",
+    "httpx>=0.28",
+    "twilio>=9.0",
+    "stripe>=11.0",
+    "python-multipart>=0.0.18",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
