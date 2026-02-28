@@ -1,0 +1,9 @@
+.runtime/
+.claude/commands/
+.logs/
+.venv/
+.beads/
+.pytest_cache/
+__pycache__/
+*.pyc
+data/
