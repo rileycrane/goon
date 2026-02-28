@@ -5,6 +5,7 @@ Handles unregistered users who text the Goon number:
 - Sends warm teaser responses (escalating with repeat contact)
 - Re-engages warm leads weekly
 """
+from __future__ import annotations
 
 import anthropic
 
