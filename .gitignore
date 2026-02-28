@@ -1,6 +1,7 @@
 .runtime/
 .claude/commands/
 .logs/
+.beads/
 __pycache__/
 *.pyc
 .venv/
