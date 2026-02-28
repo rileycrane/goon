@@ -1,27 +1,34 @@
-"""Settings from environment variables."""
-
-import os
-from pathlib import Path
+from pydantic_settings import BaseSettings
 
 
-# Twilio
-TWILIO_ACCOUNT_SID: str = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN: str = os.environ.get("TWILIO_AUTH_TOKEN", "")
-GOON_NUMBER: str = os.environ.get("GOON_NUMBER", "")
+class Settings(BaseSettings):
+    # Twilio
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    goon_number: str = ""
 
-# Anthropic
-ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+    # Anthropic
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5-20250929"
 
-# Database
-DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///data/goon.db")
-DATABASE_PATH: Path = Path(
-    DATABASE_URL.replace("sqlite:///", "") if DATABASE_URL.startswith("sqlite:///") else "data/goon.db"
-)
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_id: str = ""  # $19.99/month price object
 
-# User data
-USER_DATA_DIR: Path = Path(os.environ.get("USER_DATA_DIR", "data/users"))
+    # Database
+    database_url: str = "sqlite+aiosqlite:///data/goon.db"
 
-# App
-BASE_URL: str = os.environ.get("BASE_URL", "https://getgoon.com")
-SIGNUP_URL: str = f"{BASE_URL}/signup" if BASE_URL else "https://getgoon.com/signup"
+    # Server
+    base_url: str = "https://getgoon.com"
+
+    # User data
+    user_data_dir: str = "data/users"
+
+    # Trial
+    trial_days: int = 7
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+
+settings = Settings()

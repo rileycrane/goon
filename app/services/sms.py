@@ -1,7 +1,7 @@
 """Twilio SMS sending — segment-aware, GSM 7-bit only."""
 
 import re
-from app.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, GOON_NUMBER
+from app.config import settings
 
 GSM_PATTERN = re.compile(r'^[\x20-\x7E\n\r]*$')
 
@@ -61,5 +61,5 @@ async def send_sms(to: str, body: str) -> None:
 async def _send(to: str, body: str) -> None:
     """Send a single SMS via Twilio."""
     from twilio.rest import Client
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    client.messages.create(to=to, from_=GOON_NUMBER, body=body)
+    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+    client.messages.create(to=to, from_=settings.goon_number, body=body)

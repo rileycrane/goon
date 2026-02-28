@@ -1,51 +1,69 @@
-"""SQLite async wrapper using aiosqlite."""
-
 import aiosqlite
 from pathlib import Path
-from typing import Any
 
-from app.config import DATABASE_PATH
+_DB_PATH = Path("data/goon.db")
+_SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+
+
+async def get_db() -> aiosqlite.Connection:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = await aiosqlite.connect(str(_DB_PATH))
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("PRAGMA foreign_keys=ON")
+    return db
+
+
+async def init_db():
+    db = await get_db()
+    try:
+        schema = _SCHEMA_PATH.read_text()
+        await db.executescript(schema)
+        await db.commit()
+    finally:
+        await db.close()
 
 
 class Database:
-    def __init__(self, path: Path | str | None = None):
-        self.path = Path(path) if path else DATABASE_PATH
-        self._conn: aiosqlite.Connection | None = None
+    """Thin async wrapper around aiosqlite for use by services."""
 
-    async def connect(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = await aiosqlite.connect(str(self.path))
-        self._conn.row_factory = aiosqlite.Row
-        await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.execute("PRAGMA foreign_keys=ON")
+    def __init__(self):
+        self._db: aiosqlite.Connection | None = None
 
-    async def close(self) -> None:
-        if self._conn:
-            await self._conn.close()
-            self._conn = None
+    async def connect(self):
+        self._db = await get_db()
 
-    async def init_schema(self) -> None:
-        schema_path = Path(__file__).parent / "schema.sql"
-        schema = schema_path.read_text()
-        await self._conn.executescript(schema)
+    async def close(self):
+        if self._db:
+            await self._db.close()
+            self._db = None
 
-    async def execute(self, query: str, params: list[Any] | None = None) -> aiosqlite.Cursor:
-        cursor = await self._conn.execute(query, params or [])
-        await self._conn.commit()
+    async def _ensure_connected(self):
+        if self._db is None:
+            await self.connect()
+
+    async def execute(self, sql: str, params: list | None = None) -> aiosqlite.Cursor:
+        await self._ensure_connected()
+        assert self._db is not None
+        cursor = await self._db.execute(sql, params or [])
+        await self._db.commit()
         return cursor
 
-    async def fetch_one(self, query: str, params: list[Any] | None = None) -> dict | None:
-        cursor = await self._conn.execute(query, params or [])
+    async def fetch_one(self, sql: str, params: list | None = None) -> dict | None:
+        await self._ensure_connected()
+        assert self._db is not None
+        cursor = await self._db.execute(sql, params or [])
         row = await cursor.fetchone()
         if row is None:
             return None
         return dict(row)
 
-    async def fetch_all(self, query: str, params: list[Any] | None = None) -> list[dict]:
-        cursor = await self._conn.execute(query, params or [])
+    async def fetch_all(self, sql: str, params: list | None = None) -> list[dict]:
+        await self._ensure_connected()
+        assert self._db is not None
+        cursor = await self._db.execute(sql, params or [])
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
 
-# Module-level singleton
 db = Database()
