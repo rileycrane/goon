@@ -1,3 +1,6 @@
 .runtime/
 .claude/commands/
 .logs/
+.beads/
+.pytest_cache/
+__pycache__/
