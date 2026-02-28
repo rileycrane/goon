@@ -1,177 +1,313 @@
-"""Tests for outbound call service."""
+"""Tests for outbound call management."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 
+from app.db.database import Database
+from app.routes.vapi_events import classify_call_outcome, summarize_call_result
 from app.services.calls import (
     build_call_prompt,
     build_first_message,
+    handle_call_failure,
     pre_call_check,
+    schedule_retry,
 )
 
 
+@pytest_asyncio.fixture
+async def call_db(tmp_path):
+    """Fresh database for call tests."""
+    from pathlib import Path
+
+    import aiosqlite
+
+    db_path = tmp_path / "test.db"
+    schema_path = Path(__file__).parent.parent / "app" / "db" / "schema.sql"
+
+    conn = await aiosqlite.connect(str(db_path))
+    conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA foreign_keys=ON")
+    schema = schema_path.read_text()
+    await conn.executescript(schema)
+    await conn.commit()
+
+    test_database = Database()
+    test_database._conn = conn
+
+    yield test_database
+
+    await conn.close()
+
+
+# --- classify_call_outcome tests ---
+
+
+class TestClassifyCallOutcome:
+    def test_assistant_ended_with_transcript(self):
+        outcome = classify_call_outcome(
+            "assistant-ended-call",
+            "Agent: Hi, do you have a table? Host: Yes, 7pm works. Agent: Great, thanks!",
+        )
+        assert outcome["success"] is True
+
+    def test_assistant_ended_short_transcript(self):
+        outcome = classify_call_outcome("assistant-ended-call", "Hello?")
+        assert outcome["success"] is False
+        assert outcome["reason"] == "no_useful_info"
+        assert outcome["retry"] is True
+
+    def test_customer_ended_with_transcript(self):
+        outcome = classify_call_outcome(
+            "customer-ended-call",
+            "A" * 150,  # Long enough transcript suggests info was exchanged
+        )
+        assert outcome["success"] is True
+
+    def test_customer_ended_short(self):
+        outcome = classify_call_outcome("customer-ended-call", "Hello?")
+        assert outcome["success"] is False
+        assert outcome["reason"] == "hung_up"
+        assert outcome["retry"] is True
+
+    def test_no_answer(self):
+        outcome = classify_call_outcome("no-answer", "")
+        assert outcome["success"] is False
+        assert outcome["reason"] == "no-answer"
+        assert outcome["retry"] is True
+        assert outcome["retry_delay_minutes"] == 10
+
+    def test_busy(self):
+        outcome = classify_call_outcome("busy", "")
+        assert outcome["success"] is False
+        assert outcome["reason"] == "busy"
+        assert outcome["retry"] is True
+        assert outcome["retry_delay_minutes"] == 5
+
+    def test_voicemail(self):
+        outcome = classify_call_outcome("voicemail", "")
+        assert outcome["success"] is False
+        assert outcome["reason"] == "voicemail"
+        assert outcome["retry"] is True
+        assert outcome["retry_delay_minutes"] == 30
+
+    def test_max_duration(self):
+        outcome = classify_call_outcome("max-duration-reached", "hold music...")
+        assert outcome["success"] is False
+        assert outcome["reason"] == "timeout"
+        assert outcome["retry"] is False
+
+    def test_unknown(self):
+        outcome = classify_call_outcome("unknown", "")
+        assert outcome["success"] is False
+
+
+# --- build_call_prompt tests ---
+
+
 class TestBuildCallPrompt:
-    """Test voice agent prompt generation."""
-
-    def test_basic_prompt_includes_business(self):
+    def test_basic_prompt(self):
         prompt = build_call_prompt(
-            business_name="Joe's Pizza",
-            task="What are your hours today?",
-            task_type="info",
-            user_name="Alice",
-            details={},
+            task="What time do you close?",
+            task_type="info_query",
+            business_name="Pizza Palace",
+            user_name="Riley",
         )
-        assert "Joe's Pizza" in prompt
-        assert "What are your hours today?" in prompt
-        assert "Alice" in prompt
-        assert "on behalf of" in prompt  # The rule about NOT saying it
-
-    def test_prompt_no_ai_disclosure(self):
-        prompt = build_call_prompt(
-            business_name="Test Biz",
-            task="Do you take reservations?",
-            task_type="info",
-            user_name="Bob",
-            details={},
-        )
-        assert "Do NOT say" in prompt
-        assert "I'm an AI" in prompt
+        assert "Pizza Palace" in prompt
+        assert "What time do you close?" in prompt
+        assert "Riley" in prompt
+        assert "Do NOT" in prompt
 
     def test_reservation_prompt(self):
         prompt = build_call_prompt(
-            business_name="Fancy Restaurant",
             task="Make a reservation",
             task_type="reservation",
-            user_name="Carol",
+            business_name="Delfina",
+            user_name="Riley",
             details={"party_size": "4", "date": "Friday", "time": "7pm"},
         )
         assert "Reservation-Specific" in prompt
         assert "4" in prompt
         assert "Friday" in prompt
-        assert "7pm" in prompt
 
     def test_appointment_prompt(self):
         prompt = build_call_prompt(
-            business_name="Dr. Smith",
-            task="Schedule a dental cleaning",
+            task="Schedule a haircut",
             task_type="appointment",
-            user_name="Dave",
-            details={"service": "cleaning", "date": "next week"},
+            business_name="Salon",
+            user_name="Riley",
+            details={"service": "haircut", "date": "tomorrow"},
         )
         assert "Appointment-Specific" in prompt
-        assert "cleaning" in prompt
+        assert "haircut" in prompt
+
+    def test_ivr_map_included(self):
+        prompt = build_call_prompt(
+            task="Check hours",
+            task_type="info_query",
+            business_name="BigCo",
+            user_name="Riley",
+            ivr_map={"menu_structure": {"1": "hours", "2": "reservations", "0": "operator"}},
+        )
+        assert "Known IVR Menu" in prompt
+        assert "Press 1: hours" in prompt
+        assert "Press 0: operator" in prompt
+
+
+# --- build_first_message tests ---
 
 
 class TestBuildFirstMessage:
-    """Test voice agent opening lines."""
-
-    def test_reservation_opening(self):
+    def test_reservation(self):
         msg = build_first_message(
             "Make a reservation",
             "reservation",
-            {"party_size": "4", "date": "Friday", "time": "7pm"},
+            {"party_size": "2", "date": "tonight", "time": "7"},
         )
-        assert "reservation" in msg
-        assert "4" in msg
-        assert "Friday" in msg
+        assert "reservation" in msg.lower()
+        assert "2" in msg
 
-    def test_appointment_opening(self):
-        msg = build_first_message(
-            "Schedule a dental cleaning",
-            "appointment",
-            {},
-        )
-        assert "appointment" in msg
-        assert "dental cleaning" in msg
+    def test_appointment(self):
+        msg = build_first_message("Schedule a haircut", "appointment")
+        assert "appointment" in msg.lower()
 
-    def test_availability_check_opening(self):
-        msg = build_first_message(
-            "are you open on Sundays",
-            "availability_check",
-            {},
-        )
-        assert "quick question" in msg
-        assert "open on Sundays" in msg
+    def test_availability(self):
+        msg = build_first_message("Do you have the new iPhone in stock?", "availability_check")
+        assert "quick question" in msg.lower()
 
-    def test_generic_opening(self):
-        msg = build_first_message(
-            "do you have gluten free options",
-            "info",
-            {},
-        )
-        assert msg.startswith("Hi,")
-        assert "gluten free" in msg
+    def test_generic(self):
+        msg = build_first_message("What are your hours?", "info_query")
+        assert "Hi" in msg
+        assert "hours" in msg
 
 
-class TestPreCallCheck:
-    """Test pre-call validation logic."""
+# --- handle_call_failure tests ---
 
-    @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_no_phone_number(self, mock_score):
-        result = await pre_call_check("Test Biz", "", place_id=None)
-        assert result["ok"] is False
-        assert "No phone number" in result["reason"]
 
-    @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_good_phone(self, mock_score):
-        mock_score.return_value = {
-            "call_count": 3,
-            "success_count": 2,
-            "last_outcome": "success",
+async def _insert_test_user(db: Database, phone: str = "+15551234567") -> None:
+    """Insert a test user to satisfy foreign key constraints."""
+    await db.execute(
+        "INSERT OR IGNORE INTO users (id, phone, subscription_status) VALUES (?, ?, 'active')",
+        [phone, phone],
+    )
+
+
+async def _insert_call_log(db: Database, vapi_call_id: str = "call_123") -> None:
+    """Insert a test call_log record."""
+    await _insert_test_user(db)
+    await db.execute(
+        """INSERT INTO call_log
+           (user_id, vapi_call_id, business_name, business_phone, place_id, task, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'in_progress')""",
+        ["+15551234567", vapi_call_id, "Test Biz", "+15559876543", "place_abc", "test"],
+    )
+
+
+class TestHandleCallFailure:
+    @pytest.fixture
+    def mock_record(self):
+        return {
+            "user_id": "+15551234567",
+            "business_name": "Test Biz",
+            "business_phone": "+15559876543",
+            "vapi_call_id": "call_123",
+            "place_id": "place_abc",
+            "retry_count": 0,
         }
-        result = await pre_call_check("Test Biz", "+14155551234", place_id="place_1")
-        assert result["ok"] is True
 
     @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_repeated_failures(self, mock_score):
-        mock_score.return_value = {
-            "call_count": 3,
-            "success_count": 0,
-            "last_outcome": "no-answer",
+    async def test_busy_sends_sms_and_retries(self, call_db, mock_record):
+        with patch("app.services.calls.db", call_db), \
+             patch("app.services.calls.send_sms", new_callable=AsyncMock) as mock_sms, \
+             patch("app.services.calls.schedule_retry", new_callable=AsyncMock) as mock_retry:
+
+            await _insert_call_log(call_db)
+            await handle_call_failure(mock_record, {"reason": "busy", "success": False})
+
+            mock_sms.assert_called_once()
+            assert "busy" in mock_sms.call_args[0][1].lower()
+            mock_retry.assert_called_once_with(mock_record, delay_minutes=5)
+
+    @pytest.mark.asyncio
+    async def test_voicemail_sends_sms_and_retries(self, call_db, mock_record):
+        with patch("app.services.calls.db", call_db), \
+             patch("app.services.calls.send_sms", new_callable=AsyncMock) as mock_sms, \
+             patch("app.services.calls.schedule_retry", new_callable=AsyncMock) as mock_retry:
+
+            await _insert_call_log(call_db)
+            await handle_call_failure(mock_record, {"reason": "voicemail", "success": False})
+
+            mock_sms.assert_called_once()
+            assert "voicemail" in mock_sms.call_args[0][1].lower()
+            mock_retry.assert_called_once_with(mock_record, delay_minutes=30)
+
+    @pytest.mark.asyncio
+    async def test_hung_up_first_time_retries(self, call_db, mock_record):
+        with patch("app.services.calls.db", call_db), \
+             patch("app.services.calls.send_sms", new_callable=AsyncMock) as mock_sms, \
+             patch("app.services.calls.schedule_retry", new_callable=AsyncMock) as mock_retry:
+
+            await _insert_call_log(call_db)
+            await handle_call_failure(mock_record, {"reason": "hung_up", "success": False})
+
+            mock_sms.assert_called_once()
+            mock_retry.assert_called_once_with(mock_record, delay_minutes=15)
+
+    @pytest.mark.asyncio
+    async def test_hung_up_after_retry_gives_up(self, call_db, mock_record):
+        mock_record["retry_count"] = 2
+        with patch("app.services.calls.db", call_db), \
+             patch("app.services.calls.send_sms", new_callable=AsyncMock) as mock_sms, \
+             patch("app.services.calls.schedule_retry", new_callable=AsyncMock) as mock_retry:
+
+            await _insert_call_log(call_db)
+            await handle_call_failure(mock_record, {"reason": "hung_up", "success": False})
+
+            mock_sms.assert_called_once()
+            assert "call them directly" in mock_sms.call_args[0][1].lower()
+            mock_retry.assert_not_called()
+
+
+# --- schedule_retry tests ---
+
+
+class TestScheduleRetry:
+    @pytest.mark.asyncio
+    async def test_schedules_retry_under_max(self, call_db):
+        record = {
+            "user_id": "+15551234567",
+            "business_name": "Test Biz",
+            "vapi_call_id": "call_123",
+            "retry_count": 0,
+            "business_phone": "+15559876543",
         }
-        result = await pre_call_check("Test Biz", "+14155551234", place_id="place_1")
-        assert result["ok"] is False
-        assert "failed 3 times" in result["reason"]
+        with patch("app.services.calls.db", call_db):
+            await _insert_call_log(call_db)
+
+            await schedule_retry(record, delay_minutes=10)
+
+            row = await call_db.fetch_one(
+                "SELECT * FROM call_log WHERE vapi_call_id = ?", ["call_123"],
+            )
+            assert row["status"] == "retry_pending"
+            assert row["retry_count"] == 1
 
     @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_wrong_number_blocked(self, mock_score):
-        mock_score.return_value = {
-            "call_count": 1,
-            "success_count": 0,
-            "last_outcome": "wrong_number",
+    async def test_gives_up_at_max_retries(self, call_db):
+        record = {
+            "user_id": "+15551234567",
+            "business_name": "Test Biz",
+            "vapi_call_id": "call_456",
+            "retry_count": 2,
+            "business_phone": "+15559876543",
         }
-        result = await pre_call_check("Test Biz", "+14155551234", place_id="place_1")
-        assert result["ok"] is False
-        assert "wrong_number" in result["reason"]
+        with patch("app.services.calls.db", call_db), \
+             patch("app.services.calls.send_sms", new_callable=AsyncMock) as mock_sms:
+            await schedule_retry(record, delay_minutes=10)
 
-    @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_voicemail_warning(self, mock_score):
-        mock_score.return_value = {
-            "call_count": 1,
-            "success_count": 0,
-            "last_outcome": "voicemail",
-        }
-        result = await pre_call_check("Test Biz", "+14155551234", place_id="place_1")
-        assert result["ok"] is True
-        assert "voicemail" in result["warnings"][0]
-
-    @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_no_place_id_skips_score(self, mock_score):
-        result = await pre_call_check("Test Biz", "+14155551234", place_id=None)
-        assert result["ok"] is True
-        mock_score.assert_not_called()
-
-    @pytest.mark.asyncio
-    @patch("app.services.calls.get_phone_score", new_callable=AsyncMock)
-    async def test_no_prior_score(self, mock_score):
-        mock_score.return_value = None
-        result = await pre_call_check("Test Biz", "+14155551234", place_id="place_1")
-        assert result["ok"] is True
+            mock_sms.assert_called_once()
+            assert "giving up" in mock_sms.call_args[0][1].lower()

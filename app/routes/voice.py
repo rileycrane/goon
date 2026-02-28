@@ -12,6 +12,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# TwiML template to forward an inbound call to Vapi's SIP endpoint.
+FORWARD_TWIML = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Please hold while I connect you.</Say>
+  <Dial>
+    <Sip>sip:{assistant_id}@sip.vapi.ai</Sip>
+  </Dial>
+</Response>"""
+
+FALLBACK_TWIML = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Sorry, I'm having trouble connecting. Please try texting this number instead.</Say>
+  <Hangup/>
+</Response>"""
+
 
 @router.post("/webhook")
 async def voice_webhook(request: Request) -> Response:
@@ -45,26 +60,14 @@ async def voice_webhook(request: Request) -> Response:
         return Response(content=twiml, media_type="application/xml")
 
     # Forward to Vapi assistant via SIP
-    # Vapi provides a SIP URI for each phone number imported into the platform.
-    # The assistant_id is passed as a SIP header so Vapi knows which assistant to use.
     assistant_id = settings.vapi_assistant_id
     if not assistant_id:
         logger.error("VAPI_ASSISTANT_ID not configured")
-        twiml = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            "<Response>"
-            "<Say>We are experiencing technical difficulties. Please try again later.</Say>"
-            "<Hangup/>"
-            "</Response>"
-        )
-        return Response(content=twiml, media_type="application/xml")
+        return Response(content=FALLBACK_TWIML, media_type="application/xml")
 
-    # Build TwiML to connect caller to Vapi
-    # Vapi SIP endpoint: sip:{assistant_id}@sip.vapi.ai
-    # Pass caller info as SIP headers so Vapi can identify the user
-    sip_uri = f"sip:{assistant_id}@sip.vapi.ai"
     server_url = settings.vapi_server_url or f"{settings.base_url}/vapi/events"
 
+    sip_uri = f"sip:{assistant_id}@sip.vapi.ai"
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"

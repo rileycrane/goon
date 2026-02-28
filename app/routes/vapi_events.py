@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
+import anthropic
 from fastapi import APIRouter, Request
 
+from app.config.settings import settings
 from app.db.database import db
 from app.services.cache import store_fact, update_phone_score
+from app.services.calls import handle_call_failure
+from app.services.memory import append_conversation
 from app.services.sms import send_sms
 
 logger = logging.getLogger(__name__)
@@ -32,7 +35,7 @@ async def vapi_event(request: Request) -> dict:
     logger.info("Vapi event type=%s", msg_type)
 
     if msg_type == "end-of-call-report":
-        await _handle_end_of_call(msg)
+        await _handle_end_of_call(event)
     elif msg_type == "status-update":
         status = msg.get("status", "")
         call_id = msg.get("call", {}).get("id", "")
@@ -41,81 +44,83 @@ async def vapi_event(request: Request) -> dict:
     return {"status": "ok"}
 
 
-async def _handle_end_of_call(msg: dict) -> None:
-    """Process end-of-call-report from Vapi."""
-    call_data = msg.get("call", {})
-    call_id = call_data.get("id", "")
-
-    if not call_id:
-        logger.warning("End-of-call report with no call ID")
-        return
+async def _handle_end_of_call(event: dict) -> None:
+    """Process an end-of-call report from Vapi."""
+    call_data = event["message"]["call"]
+    call_id = call_data["id"]
 
     record = await db.fetch_one(
-        "SELECT * FROM call_log WHERE vapi_call_id = ?", [call_id]
+        "SELECT * FROM call_log WHERE vapi_call_id = ?", [call_id],
     )
     if not record:
-        logger.info("No call_log record for vapi_call_id=%s (may be inbound)", call_id)
+        logger.warning("No call_log record for vapi_call_id=%s", call_id)
         return
 
-    transcript = msg.get("transcript", "")
+    transcript = event["message"].get("transcript", "")
     ended_reason = call_data.get("endedReason", "unknown")
-    duration = call_data.get("durationSeconds")
+    duration = call_data.get("duration")
 
-    # Classify the outcome
     outcome = classify_call_outcome(ended_reason, transcript)
 
-    logger.info(
-        "Call ended: call=%s reason=%s success=%s",
-        call_id, ended_reason, outcome["success"],
-    )
-
-    # Update phone score if we have a place_id
+    # Update phone score
     if record.get("place_id"):
         await update_phone_score(
-            record["place_id"],
-            record["business_phone"],
-            outcome,
+            record["place_id"], record["business_phone"], outcome,
         )
 
     if outcome["success"]:
-        summary = await _summarize_call_result(transcript, record["task"])
+        summary = await summarize_call_result(transcript, record["task"])
 
-        # Text the user the result
+        # Text user the result
         await send_sms(record["user_id"], summary)
 
-        # Cache the learned fact
+        # Cache the fact
         if record.get("place_id"):
             await store_fact(
                 place_id=record["place_id"],
-                business_name=record.get("business_name", ""),
+                business_name=record["business_name"],
                 fact_type=record.get("task_type", "general"),
                 question=record["task"],
                 answer=summary,
                 source="phone_call",
             )
 
+        # Update memory
+        await append_conversation(
+            record["user_id"], "out",
+            f"[Call result: {record['business_name']}] {summary}",
+            metadata={"type": "call_result", "business": record["business_name"]},
+        )
+
         # Update call log
         await db.execute(
-            "UPDATE call_log SET status='success', result=?, transcript=?, "
-            "duration_seconds=? WHERE vapi_call_id=?",
+            """
+            UPDATE call_log SET status='success', result=?,
+                transcript=?, duration_seconds=?
+            WHERE vapi_call_id=?
+            """,
             [summary, transcript, duration, call_id],
         )
-    else:
-        await _handle_call_failure(record, outcome)
+        logger.info("Call success: %s -> %s", call_id, record["business_name"])
 
-        # Update call log with failure
+    else:
+        await handle_call_failure(record, outcome)
+        # Store transcript even on failure
         await db.execute(
-            "UPDATE call_log SET status='failed', result=?, transcript=?, "
-            "duration_seconds=? WHERE vapi_call_id=?",
-            [outcome["reason"], transcript, duration, call_id],
+            "UPDATE call_log SET transcript=?, duration_seconds=? WHERE vapi_call_id=?",
+            [transcript, duration, call_id],
+        )
+        logger.info(
+            "Call failed: %s -> %s reason=%s",
+            call_id, record["business_name"], outcome["reason"],
         )
 
 
 def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
-    """Classify call outcome based on Vapi's ended reason and transcript length.
+    """Classify call outcome based on Vapi's ended reason and transcript content.
 
-    Taxonomy from original TalkTo:
-      busy, no_answer, voicemail, wrong_number, hostile, timeout, success
+    Based on original TalkTo's failure taxonomy:
+    busy, no_answer, ivr_stuck, voicemail, wrong_number, hostile, timeout, success.
     """
     outcome: dict = {"success": False, "reason": ended_reason, "retry": False}
 
@@ -123,6 +128,7 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
         # Agent chose to end -- could be success or deliberate hangup
         if transcript and len(transcript) > 50:
             outcome["success"] = True
+            outcome["reason"] = "success"
         else:
             outcome["reason"] = "no_useful_info"
             outcome["retry"] = True
@@ -131,6 +137,7 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
         # Business hung up
         if len(transcript) > 100:
             outcome["success"] = True
+            outcome["reason"] = "success"
         else:
             outcome["reason"] = "hung_up"
             outcome["retry"] = True
@@ -138,7 +145,7 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
     elif ended_reason in ("no-answer", "busy"):
         outcome["reason"] = ended_reason
         outcome["retry"] = True
-        outcome["retry_delay_minutes"] = 10
+        outcome["retry_delay_minutes"] = 10 if ended_reason == "no-answer" else 5
 
     elif ended_reason == "voicemail":
         outcome["reason"] = "voicemail"
@@ -152,57 +159,21 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
     return outcome
 
 
-async def _summarize_call_result(transcript: str, task: str) -> str:
-    """Use Claude to summarize a call transcript into a user-friendly SMS."""
-    import anthropic
-
+async def summarize_call_result(transcript: str, task: str) -> str:
+    """Summarize a call transcript into an SMS-length response."""
     client = anthropic.AsyncAnthropic()
     response = await client.messages.create(
         model="claude-sonnet-4-5-20250929",
-        max_tokens=300,
+        max_tokens=200,
         messages=[
             {
                 "role": "user",
                 "content": (
-                    f"Summarize this phone call result for an SMS to the user. "
-                    f"Be concise (under 300 chars). No emoji.\n\n"
-                    f"Task: {task}\n\n"
+                    f"Summarize this phone call result in 1-2 sentences for an SMS. "
+                    f"Be concise, no emoji. The user's original request was: {task}\n\n"
                     f"Transcript:\n{transcript[:2000]}"
                 ),
             }
         ],
     )
-    return response.content[0].text
-
-
-async def _handle_call_failure(record: dict, outcome: dict) -> None:
-    """Handle a failed call -- notify user and schedule retry if appropriate."""
-    user_id = record["user_id"]
-    business = record.get("business_name", "the business")
-    reason = outcome["reason"]
-
-    retry = outcome.get("retry", False)
-    retry_count = record.get("retry_count", 0)
-    max_retries = 2
-
-    if retry and retry_count < max_retries:
-        delay = outcome.get("retry_delay_minutes", 10)
-        retry_after = datetime.now().isoformat()
-
-        await db.execute(
-            "UPDATE call_log SET status='retry_pending', retry_count=retry_count+1, "
-            "retry_after=? WHERE id=?",
-            [retry_after, record["id"]],
-        )
-
-        msg = (
-            f"Couldn't reach {business} ({reason}). "
-            f"Will try again in {delay} minutes."
-        )
-        await send_sms(user_id, msg)
-    else:
-        msg = (
-            f"Couldn't reach {business} after multiple attempts ({reason}). "
-            f"Want me to try a different approach or look online instead?"
-        )
-        await send_sms(user_id, msg)
+    return response.content[0].text.strip()
