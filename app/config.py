@@ -1,15 +1,27 @@
+"""Settings from environment variables."""
+
 import os
 from pathlib import Path
 
-# User data directory — contains per-user profile.md, conversations.jsonl, etc.
-USER_DATA_DIR = Path(os.getenv("USER_DATA_DIR", "data/users"))
 
-# Anthropic API
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+# Twilio
+TWILIO_ACCOUNT_SID: str = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN: str = os.environ.get("TWILIO_AUTH_TOKEN", "")
+GOON_NUMBER: str = os.environ.get("GOON_NUMBER", "")
 
-# How many recent messages to keep in memory (loaded from JSONL)
-MEMORY_RECENT_LIMIT = 20
+# Anthropic
+ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 
-# How many recent messages to include in LLM context
-MEMORY_CONTEXT_LIMIT = 5
+# Database
+DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///data/goon.db")
+DATABASE_PATH: Path = Path(
+    DATABASE_URL.replace("sqlite:///", "") if DATABASE_URL.startswith("sqlite:///") else "data/goon.db"
+)
+
+# User data
+USER_DATA_DIR: Path = Path(os.environ.get("USER_DATA_DIR", "data/users"))
+
+# App
+BASE_URL: str = os.environ.get("BASE_URL", "https://getgoon.com")
+SIGNUP_URL: str = f"{BASE_URL}/signup" if BASE_URL else "https://getgoon.com/signup"

@@ -1,9 +1,10 @@
+.runtime/
+.claude/commands/
+.logs/
+.beads/
 __pycache__/
 *.pyc
-.env
-data/
-*.db
-.beads/
-venv/
 .venv/
-node_modules/
+.pytest_cache/
+data/
+.env
