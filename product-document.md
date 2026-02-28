@@ -64,9 +64,29 @@ Goon: Done. Delfina, tonight, 7:30, table for 2 under Riley.
 
 ## System Components
 
-Goon decomposes into **9 independent components**. Each can be built, tested, and iterated on in isolation. They communicate through well-defined interfaces (function calls, database tables, webhooks).
+Goon decomposes into **10 components** (0-9). Each can be built, tested, and iterated on in isolation. They communicate through well-defined interfaces (function calls, database tables, webhooks).
 
 This decomposition is designed for parallel agent execution. Each component is a self-contained unit of work with clear inputs, outputs, and no shared mutable state with other components during development.
+
+---
+
+### Component 0: Test Harness
+
+**What it does**: Provides a controlled integration test loop so you can validate the full SMS → agent → voice call → response circuit without calling real businesses.
+
+**How it works**: A test business registry (config file) defines fake businesses like "Riley's Pizza" with your Google Voice number as the phone. When test mode is enabled, these businesses are checked before Google Places in the resolution ladder. When Goon decides to call "Riley's Pizza," it calls YOUR phone — you answer as the restaurant, talk to the AI voice agent, and the result texts back to you.
+
+**Key pieces**:
+- `test_businesses.py` config with name, phone, address, cached facts per fake business
+- `ENABLE_TEST_BUSINESSES` env flag (inserts at Step 0 of the resolution ladder)
+- Relaxed pre-call checks for test businesses (skip open_now, skip phone score)
+- Verbose logging showing the full decision chain
+- 7 test scenarios covering every integration point (see `goon-test-harness.md`)
+- Guided integration test script you run with two phones in hand
+
+**Why this exists first**: You can't iterate on voice prompts, retry logic, or the resolution ladder by calling real businesses. You need a tight feedback loop where the full circuit completes in 2 minutes and you control both sides.
+
+**Full spec**: See `goon-test-harness.md` for scenarios, phone setup, and the test script.
 
 ---
 
@@ -436,6 +456,11 @@ These components are designed to be built in parallel by independent agents. Her
 ### Suggested Gas Town Convoy Plan
 
 ```
+CONVOY 0 (single agent, day 0): "The Test Rig"
+└── Agent Z: Component 0 — Test Harness
+    (test_businesses.py, Google Voice setup, test mode flag,
+     integration test script, verbose logging config)
+
 CONVOY 1 (parallel, day 1-3): "The Foundation"
 ├── Agent A: Component 4a — Fact Cache (SQLite schema + CRUD)
 ├── Agent B: Component 4b — Google Places wrapper
@@ -452,13 +477,18 @@ CONVOY 2 (parallel, day 2-4): "The Pipes"
 CONVOY 3 (sequential, day 4-6): "The Brain"
 └── Agent J: Component 3 — Orchestrator
     (wires everything together, implements resolution ladder,
-     tool loop, system prompt)
+     injects test business registry at Step 0)
 
-CONVOY 4 (after brain works, day 6-8): "Intelligence"
+CONVOY 4 (day 6): "THE FULL CIRCUIT TEST"
+└── You, with two phones, running integration_test.py
+    Scenario 3 (text → call → answer → result) is the gate.
+    Nothing else gets built until this works.
+
+CONVOY 5 (after circuit works, day 6-8): "Intelligence"
 ├── Agent K: Component 7 — Proactive Intelligence
 └── Agent L: Component 5d — Retry System (cron + call_log)
 
-CONVOY 5 (after core works, day 8-10): "Polish"
+CONVOY 6 (after core works, day 8-10): "Polish"
 ├── Agent M: Error handling & graceful degradation
 ├── Agent N: Next.js registration site (getgoon.com)
 └── Agent O: Admin dashboard
@@ -506,6 +536,17 @@ Most implementation details are straightforward. These are the ones where the ch
 
 ## Success Criteria
 
+### Gate 0: The Full Circuit (must pass before anything else)
+
+- [ ] I text "Book me a table at Riley's Pizza for 2 tonight at 7"
+- [ ] Goon texts back "Calling now"
+- [ ] My Google Voice phone rings
+- [ ] I answer as the restaurant, have a natural conversation with the AI voice agent
+- [ ] Goon texts me the confirmed reservation details
+- [ ] The whole thing takes under 3 minutes
+
+**Nothing else gets built until this works.** This is the integration test gate.
+
 ### For v0 (personal prototype)
 
 - [ ] I can text the number and get useful answers about local businesses
@@ -527,6 +568,7 @@ Most implementation details are straightforward. These are the ones where the ch
 ## What This Document Does NOT Cover
 
 - **Implementation details** — see `goon-blueprint.md` for the full technical spec with code samples, database schemas, and API integration details.
+- **Integration test harness** — see `goon-test-harness.md` for test scenarios, phone setup (Google Voice), the Riley's Pizza test business, and the guided test script.
 - **Pricing strategy** — $19.99/month is a starting point. Needs validation.
 - **Marketing / launch plan** — not relevant until the thing works.
 - **Legal / compliance** — TCPA, FCC regulations on automated calling, Twilio acceptable use. Needs review before any user-facing launch.
