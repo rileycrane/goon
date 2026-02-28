@@ -1,0 +1,20 @@
+.runtime/
+.claude/commands/
+.logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Environment
+.env
+
+# Data (user data, database)
+data/
+
+# IDE
+.vscode/
+.idea/
