@@ -1,3 +1,6 @@
+"""User auth — lookup, subscription check, allowlist."""
+from __future__ import annotations
+
 from datetime import datetime
 
 from app.db.database import db
@@ -22,6 +25,14 @@ def is_user_active(user: dict) -> bool:
         if trial_end > datetime.now():
             return True
     return False
+
+
+async def is_authorized(phone: str) -> bool:
+    """Check if a phone number is authorized to use Goon."""
+    user = await get_user(phone)
+    if user is None:
+        return False
+    return is_user_active(user)
 
 
 async def create_user(

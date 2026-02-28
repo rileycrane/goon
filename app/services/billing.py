@@ -58,13 +58,11 @@ async def handle_checkout_completed(session: dict) -> dict | None:
     if not phone:
         return None
 
-    # Get email from customer object
     customer = stripe.Customer.retrieve(customer_id)
     email = customer.get("email", "")
 
     existing = await get_user(phone)
     if existing:
-        # Re-subscribing user: update status
         await update_subscription_status(phone, "active")
         await set_stripe_customer_id(phone, customer_id)
         return await get_user(phone)
@@ -83,7 +81,6 @@ async def handle_subscription_updated(subscription: dict) -> None:
     customer_id = subscription["customer"]
     status = subscription["status"]
 
-    # Map Stripe status to our status
     status_map = {
         "active": "active",
         "past_due": "past_due",

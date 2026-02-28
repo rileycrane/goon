@@ -11,13 +11,24 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5-20250929"
 
+    # Vapi
+    vapi_api_key: str = ""
+    vapi_assistant_id: str = ""
+
+    # Google Places
+    google_places_api_key: str = ""
+
+    # Tavily (web search)
+    tavily_api_key: str = ""
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_price_id: str = ""  # $19.99/month price object
+    stripe_price_id: str = ""
 
     # Database
     database_url: str = "sqlite+aiosqlite:///data/goon.db"
+    database_path: str = "data/goon.db"
 
     # Server
     base_url: str = "https://getgoon.com"
@@ -27,6 +38,12 @@ class Settings(BaseSettings):
 
     # Trial
     trial_days: int = 7
+
+    # Admin
+    admin_password: str = ""
+
+    # Test mode
+    enable_test_businesses: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

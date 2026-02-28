@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+from app.config import settings
 
 API_BASE = "https://places.googleapis.com/v1"
 
@@ -82,7 +83,6 @@ def _parse_place(raw: dict[str, Any]) -> PlaceResult:
     display_name = raw.get("displayName", {})
     location = raw.get("location", {})
 
-    # Hours: prefer currentOpeningHours (accounts for holidays), fall back to regular
     current_hours = raw.get("currentOpeningHours") or raw.get("regularOpeningHours") or {}
     regular_hours = raw.get("regularOpeningHours") or {}
 
@@ -108,7 +108,7 @@ def _parse_place(raw: dict[str, Any]) -> PlaceResult:
 
 
 def _get_api_key() -> str:
-    key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
+    key = settings.google_places_api_key
     if not key:
         raise RuntimeError("GOOGLE_PLACES_API_KEY not set")
     return key
@@ -130,22 +130,9 @@ async def search_places(
     radius_m: float = 10000.0,
     max_results: int = 5,
 ) -> list[PlaceResult]:
-    """Search for businesses by text query.
-
-    Args:
-        query: Search text, e.g. "Pizzeria Delfina Palo Alto".
-        location: Optional city/address string appended to query for context.
-        lat: Optional latitude for location bias circle center.
-        lng: Optional longitude for location bias circle center.
-        radius_m: Radius in meters for location bias (default 10km).
-        max_results: Max places to return (1-20).
-
-    Returns:
-        List of PlaceResult objects sorted by relevance.
-    """
+    """Search for businesses by text query."""
     api_key = _get_api_key()
 
-    # Build the query — append location string for better results
     text_query = f"{query} {location}" if location and location.lower() not in query.lower() else query
 
     body: dict[str, Any] = {
@@ -176,14 +163,7 @@ async def search_places(
 
 
 async def get_place_details(place_id: str) -> PlaceResult | None:
-    """Get detailed info for a single place by its place_id.
-
-    Args:
-        place_id: Google Place ID (e.g. "ChIJ...").
-
-    Returns:
-        PlaceResult with full details, or None if not found.
-    """
+    """Get detailed info for a single place by its place_id."""
     api_key = _get_api_key()
 
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -214,7 +194,6 @@ def format_place_for_llm(place: PlaceResult) -> str:
             stars += f" ({place.rating_count} reviews)"
         parts.append(stars)
     if place.price_level:
-        # PRICE_LEVEL_INEXPENSIVE -> $, MODERATE -> $$, etc.
         level_map = {
             "PRICE_LEVEL_FREE": "Free",
             "PRICE_LEVEL_INEXPENSIVE": "$",
@@ -233,11 +212,7 @@ def format_place_for_llm(place: PlaceResult) -> str:
 
 
 def is_chain_business(place: PlaceResult) -> bool:
-    """Heuristic: detect if a place is likely a chain/franchise.
-
-    Chains tend to have very high review counts and generic types.
-    This is a rough heuristic — not definitive.
-    """
+    """Heuristic: detect if a place is likely a chain/franchise."""
     if place.rating_count and place.rating_count > 5000:
         return True
     chain_types = {"fast_food_restaurant", "supermarket", "department_store", "drugstore"}

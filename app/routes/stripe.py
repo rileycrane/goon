@@ -13,7 +13,7 @@ router = APIRouter()
 stripe.api_key = settings.stripe_secret_key
 
 
-@router.post("/webhook/stripe")
+@router.post("/webhook")
 async def stripe_webhook(
     request: Request,
     stripe_signature: str = Header(alias="Stripe-Signature"),
@@ -39,7 +39,6 @@ async def stripe_webhook(
     if event_type == "checkout.session.completed":
         user = await handle_checkout_completed(data)
         if user:
-            # Send welcome SMS (import here to avoid circular deps)
             from app.services.sms import send_sms
 
             await send_sms(

@@ -8,7 +8,7 @@ Handles unregistered users who text the Goon number:
 
 import anthropic
 
-from app.config import ANTHROPIC_MODEL, SIGNUP_URL
+from app.config import settings
 from app.db.database import db
 from app.services.sms import send_sms
 
@@ -34,11 +34,19 @@ async def handle_unregistered(phone: str, body: str) -> str:
     else:
         response = (
             f"You've texted {n} times -- looks like you could use a Goon. "
-            f"Sign up: {SIGNUP_URL}"
+            f"Sign up: {settings.base_url}/signup"
         )
 
     await send_sms(phone, response)
     return response
+
+
+async def log_unregistered_attempt(phone: str, body: str) -> None:
+    """Log an SMS from an unregistered number."""
+    await db.execute(
+        "INSERT INTO unregistered_attempts (phone, body) VALUES (?, ?)",
+        [phone, body],
+    )
 
 
 async def compose_teaser(
@@ -56,7 +64,7 @@ async def compose_teaser(
 
     client = anthropic.AsyncAnthropic()
     response = await client.messages.create(
-        model=ANTHROPIC_MODEL,
+        model=settings.anthropic_model,
         max_tokens=160,
         messages=[
             {
@@ -68,13 +76,21 @@ async def compose_teaser(
                     f"\nGive a brief, helpful response that:\n"
                     f"1. Acknowledges what they're asking\n"
                     f"2. Gives a partial/teaser answer if possible\n"
-                    f"3. Mentions signup: {SIGNUP_URL}\n"
+                    f"3. Mentions signup: {settings.base_url}/signup\n"
                     f"\nMUST be under 155 chars total. No emoji. Be warm, not salesy."
                 ),
             }
         ],
     )
     return response.content[0].text.strip()
+
+
+async def get_teaser_response() -> str:
+    """Return a static teaser response for unregistered users."""
+    return (
+        "Hey! Goon is an AI concierge that handles calls and errands for you. "
+        f"Sign up at {settings.base_url} to get started."
+    )
 
 
 async def run_reengagement() -> list[dict]:
@@ -106,7 +122,7 @@ async def compose_reengagement(lead: dict) -> str | None:
     """Compose a personalized re-engagement message for a warm lead."""
     client = anthropic.AsyncAnthropic()
     response = await client.messages.create(
-        model=ANTHROPIC_MODEL,
+        model=settings.anthropic_model,
         max_tokens=160,
         messages=[
             {
@@ -117,7 +133,7 @@ async def compose_reengagement(lead: dict) -> str | None:
                     f"\nCompose a short follow-up SMS that:\n"
                     f"1. References what they were trying to do\n"
                     f"2. Shows the value they'd get from signing up\n"
-                    f"3. Includes signup link: {SIGNUP_URL}\n"
+                    f"3. Includes signup link: {settings.base_url}/signup\n"
                     f"\nMUST be under 155 chars. No emoji. Warm, not salesy.\n"
                     f"If the messages don't warrant follow-up, respond exactly: SKIP"
                 ),

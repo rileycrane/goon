@@ -6,21 +6,20 @@ in the fact cache or Google Places structured data.
 
 from __future__ import annotations
 
-import os
 import logging
 from dataclasses import dataclass
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
-# Sensible defaults for business-info searches
 DEFAULT_MAX_RESULTS = 5
-DEFAULT_SEARCH_DEPTH = "basic"  # "basic" or "advanced"
-REQUEST_TIMEOUT = 15.0  # seconds
+DEFAULT_SEARCH_DEPTH = "basic"
+REQUEST_TIMEOUT = 15.0
 
 
 @dataclass
@@ -35,16 +34,15 @@ class SearchResult:
 class SearchResponse:
     query: str
     results: list[SearchResult]
-    answer: str | None  # Tavily's optional generated answer
+    answer: str | None
 
 
 async def search_web(query: str, *, max_results: int = DEFAULT_MAX_RESULTS) -> str:
     """Search the web for business information.
 
     Returns a formatted string suitable for the LLM to interpret.
-    On failure, returns an error message the LLM can relay gracefully.
     """
-    if not TAVILY_API_KEY:
+    if not settings.tavily_api_key:
         logger.error("TAVILY_API_KEY not set")
         return "Web search unavailable (not configured)."
 
@@ -71,7 +69,7 @@ async def _tavily_search(
 ) -> SearchResponse:
     """Call the Tavily search API."""
     payload = {
-        "api_key": TAVILY_API_KEY,
+        "api_key": settings.tavily_api_key,
         "query": query,
         "max_results": max_results,
         "search_depth": search_depth,
