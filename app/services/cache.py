@@ -3,6 +3,7 @@
 Resolution ladder: Cache -> Google Places -> Web Search -> Pre-Call -> Voice Call.
 This module handles the cache layer — the cheapest step.
 """
+from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
