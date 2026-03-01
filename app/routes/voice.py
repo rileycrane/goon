@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import APIRouter, Request, Response
 
 from app.config.settings import settings
@@ -12,14 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# TwiML template to forward an inbound call to Vapi's SIP endpoint.
-FORWARD_TWIML = """<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Please hold while I connect you.</Say>
-  <Dial>
-    <Sip>sip:{assistant_id}@sip.vapi.ai</Sip>
-  </Dial>
-</Response>"""
+VAPI_BASE = "https://api.vapi.ai"
 
 FALLBACK_TWIML = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -36,7 +30,7 @@ async def voice_webhook(request: Request) -> Response:
       1. Twilio receives inbound call to the Goon number
       2. Twilio POSTs to this webhook
       3. We check caller auth (registered + active subscription)
-      4. If authorized, return TwiML that forwards to Vapi assistant
+      4. If authorized, call Vapi API which returns TwiML to bridge the call
       5. If not authorized, play a brief rejection message
     """
     form = await request.form()
@@ -64,28 +58,37 @@ async def voice_webhook(request: Request) -> Response:
         )
         return Response(content=twiml, media_type="application/xml")
 
-    # Forward to Vapi assistant via SIP
+    # Forward to Vapi assistant via provider bypass
     assistant_id = settings.vapi_assistant_id
     if not assistant_id:
         logger.error("VAPI_ASSISTANT_ID not configured")
         return Response(content=FALLBACK_TWIML, media_type="application/xml")
 
-    server_url = settings.vapi_server_url or f"{settings.base_url}/vapi/events"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{VAPI_BASE}/call",
+                headers={
+                    "Authorization": f"Bearer {settings.vapi_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "phoneNumberId": settings.vapi_phone_number_id,
+                    "phoneCallProviderBypassEnabled": True,
+                    "customer": {"number": caller},
+                    "assistantId": assistant_id,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        logger.exception("Failed to create Vapi inbound call for %s", caller)
+        return Response(content=FALLBACK_TWIML, media_type="application/xml")
 
-    sip_uri = f"sip:{assistant_id}@sip.vapi.ai"
-    twiml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response>"
-        "<Dial>"
-        f'<Sip>{sip_uri}'
-        f"?X-Vapi-Server-Url={server_url}"
-        f"&amp;X-Caller-Phone={caller}"
-        f"&amp;X-Caller-Name={user.get('name', '')}"
-        f"&amp;X-Call-Sid={call_sid}"
-        "</Sip>"
-        "</Dial>"
-        "</Response>"
-    )
+    twiml = data.get("phoneCallProviderDetails", {}).get("twiml", "")
+    if not twiml:
+        logger.error("Vapi response missing TwiML for inbound call from %s", caller)
+        return Response(content=FALLBACK_TWIML, media_type="application/xml")
 
     logger.info("Forwarding call to Vapi assistant=%s caller=%s", assistant_id, caller)
     return Response(content=twiml, media_type="application/xml")

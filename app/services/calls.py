@@ -130,10 +130,11 @@ If you reach an automated phone system:
 - "We don't give that info over phone": thank them, hang up
 - "Check our website": ask for the URL if you don't have it, hang up
 
-## After Getting the Answer
-- If they confirm success, just say "Great, thank you so much" and end the call
+## After Getting the Answer — CRITICAL
+- Once they confirm your request is handled, say "Great, thank you so much" and END THE CALL IMMEDIATELY
+- Do NOT ask "anything else?" or "is there anything else I can help with?" — YOU called THEM
 - Do NOT repeat back details they just told you -- it sounds robotic
-- Keep the goodbye brief and natural
+- Do NOT linger. One brief "thanks, bye" and hang up. You are the caller, not the receptionist.
 """
 
     details = details or {}
@@ -230,19 +231,6 @@ async def initiate_outbound_call(
                 "provider": "anthropic",
                 "model": "claude-sonnet-4-5-20250929",
                 "messages": [{"role": "system", "content": system_prompt}],
-            },
-            "voice": {
-                "provider": "11labs",
-                "voiceId": "jBzLvP03992lMFEkj2kJ",
-            },
-            "firstMessage": first_message,
-            "endCallFunctionEnabled": True,
-            "endCallMessage": "thanks",
-            "maxDurationSeconds": 180,
-            "serverUrl": server_url,
-            "model": {
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-5-20250929",
                 "tools": [
                     {
                         "type": "dtmf",
@@ -261,8 +249,17 @@ async def initiate_outbound_call(
                             }
                         }
                     }
-                ]
+                ],
             },
+            "voice": {
+                "provider": "11labs",
+                "voiceId": "jBzLvP03992lMFEkj2kJ",
+            },
+            "firstMessage": first_message,
+            "endCallFunctionEnabled": True,
+            "endCallMessage": "thanks",
+            "maxDurationSeconds": 180,
+            "serverUrl": server_url,
         },
     }
 
