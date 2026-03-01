@@ -10,6 +10,7 @@ Storage format:
     conversations.jsonl  — Raw conversation log (append-only)
     tasks.json           — Active/pending tasks + scheduled followups
 """
+from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field

@@ -1,11 +1,35 @@
 """Goon — FastAPI entry point."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.db.database import db, init_db
 from app.routes import admin, sms, stripe, vapi_events, voice
+from app.services.calls import process_retries
+from app.services.proactive import run_proactive_checks
+
+logger = logging.getLogger(__name__)
+
+# Background task handles — cancelled on shutdown
+_background_tasks: list[asyncio.Task] = []
+
+PROACTIVE_CHECK_INTERVAL = 3600  # 1 hour (checks are idempotent; 8am logic is inside)
+RETRY_CHECK_INTERVAL = 300  # 5 minutes
+
+
+async def _periodic(coro_fn, interval: int, name: str) -> None:
+    """Run an async function on a fixed interval, swallowing errors."""
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            await coro_fn()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("Background task %s failed", name)
 
 
 @asynccontextmanager
@@ -13,7 +37,29 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     await init_db()
     await db.connect()
+
+    # Start background schedulers
+    _background_tasks.append(
+        asyncio.create_task(
+            _periodic(run_proactive_checks, PROACTIVE_CHECK_INTERVAL, "proactive"),
+            name="proactive-scheduler",
+        )
+    )
+    _background_tasks.append(
+        asyncio.create_task(
+            _periodic(process_retries, RETRY_CHECK_INTERVAL, "retries"),
+            name="retry-scheduler",
+        )
+    )
+
     yield
+
+    # Cancel background tasks
+    for task in _background_tasks:
+        task.cancel()
+    await asyncio.gather(*_background_tasks, return_exceptions=True)
+    _background_tasks.clear()
+
     await db.close()
 
 

@@ -26,6 +26,7 @@ class Settings:
 
     # LLM
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 
     # Business data
     google_places_api_key: str = os.getenv("GOOGLE_PLACES_API_KEY", "")
