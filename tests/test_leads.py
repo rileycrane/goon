@@ -12,10 +12,10 @@ async def test_db(tmp_path):
     """Create an in-memory test database."""
     db = Database(tmp_path / "test.db")
     await db.connect()
-    await db.init_schema()
-    # Patch the module-level db
+    original = leads.db
     leads.db = db
     yield db
+    leads.db = original
     await db.close()
 
 
@@ -101,7 +101,7 @@ class TestHandleUnregistered:
         # The 4th response should be the direct push (not LLM-composed)
         last_sms = mock_send_sms[-1]
         assert "You've texted 4 times" in last_sms["body"]
-        assert "getgoon.com" in last_sms["body"]
+        assert "/signup" in last_sms["body"]
 
 
 class TestGetLeadStats:

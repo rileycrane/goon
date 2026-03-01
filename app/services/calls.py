@@ -164,15 +164,21 @@ If you reach an automated phone system:
 
 def build_first_message(task: str, task_type: str, details: dict | None = None) -> str:
     """Build the opening message for the voice agent. Sound human.
-    
-    Uses the natural language task description directly rather than
-    templating from structured fields -- the LLM already wrote it
-    in human-readable form.
+
+    Different task types get different openings to sound natural.
     """
-    # Rewrite the task as a natural first-person request
-    # e.g. "Make a reservation for 2" -> "I'd like to make a reservation for 2"
+    details = details or {}
+
+    if task_type == "reservation":
+        party = details.get("party_size", "2")
+        return f"Hi, I'd like to make a reservation for {party}."
+    elif task_type == "appointment":
+        return "Hi, I'd like to schedule an appointment."
+    elif task_type == "availability_check":
+        return f"Hi, I have a quick question: {task}"
+
+    # Generic: rewrite task as a natural first-person request
     t = task.strip()
-    # If it starts with a verb/command, add "I'd like to"
     command_starts = ["make", "book", "reserve", "schedule", "check", "ask", "find", "get", "call"]
     first_word = t.split()[0].lower() if t else ""
     if first_word in command_starts:

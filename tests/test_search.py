@@ -14,6 +14,14 @@ from app.services.search import (
 )
 
 
+def _fake_settings(**overrides):
+    """Create a mock settings object with specified overrides."""
+    from unittest.mock import MagicMock
+    s = MagicMock()
+    s.tavily_api_key = overrides.get("tavily_api_key", "")
+    return s
+
+
 # --- Unit tests for formatting ---
 
 
@@ -89,7 +97,7 @@ async def test_search_web_success():
     )
 
     with (
-        patch("app.services.search.TAVILY_API_KEY", "test-key"),
+        patch("app.services.search.settings", _fake_settings(tavily_api_key="test-key")),
         patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response),
     ):
         result = await search_web("whole foods palo alto hours")
@@ -101,7 +109,7 @@ async def test_search_web_success():
 
 @pytest.mark.asyncio
 async def test_search_web_no_api_key():
-    with patch("app.services.search.TAVILY_API_KEY", ""):
+    with patch("app.services.search.settings", _fake_settings(tavily_api_key="")):
         result = await search_web("test query")
     assert "not configured" in result
 
@@ -109,7 +117,7 @@ async def test_search_web_no_api_key():
 @pytest.mark.asyncio
 async def test_search_web_timeout():
     with (
-        patch("app.services.search.TAVILY_API_KEY", "test-key"),
+        patch("app.services.search.settings", _fake_settings(tavily_api_key="test-key")),
         patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=httpx.TimeoutException("timeout")),
     ):
         result = await search_web("slow query")
@@ -125,7 +133,7 @@ async def test_search_web_http_error():
     )
 
     with (
-        patch("app.services.search.TAVILY_API_KEY", "test-key"),
+        patch("app.services.search.settings", _fake_settings(tavily_api_key="test-key")),
         patch(
             "httpx.AsyncClient.post",
             new_callable=AsyncMock,

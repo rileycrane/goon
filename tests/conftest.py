@@ -32,7 +32,7 @@ async def test_db(tmp_path):
     await conn.commit()
 
     test_database = Database()
-    test_database._db = conn
+    test_database._conn = conn
 
     yield test_database
 

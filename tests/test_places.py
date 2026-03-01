@@ -255,7 +255,8 @@ class TestSearchPlaces:
 
     @pytest.mark.asyncio
     async def test_search_no_api_key_raises(self):
-        with patch.dict("os.environ", {}, clear=True):
+        with patch("app.services.places.settings") as mock_settings:
+            mock_settings.google_places_api_key = ""
             with pytest.raises(RuntimeError, match="GOOGLE_PLACES_API_KEY"):
                 await search_places("test")
 

@@ -3,7 +3,8 @@
 import pytest
 import pytest_asyncio
 
-from app.db import database as db
+from app.db.database import Database
+from app.services import cache
 from app.services.cache import (
     check_cache,
     get_ivr_map,
@@ -17,10 +18,13 @@ from app.services.cache import (
 @pytest_asyncio.fixture
 async def setup_db(tmp_path):
     """Initialize an in-memory database for each test."""
-    db_path = str(tmp_path / "test.db")
-    await db.init(db_path)
+    test_db = Database(tmp_path / "test.db")
+    await test_db.connect()
+    original = cache.db
+    cache.db = test_db
     yield
-    await db.close()
+    cache.db = original
+    await test_db.close()
 
 
 @pytest.mark.asyncio

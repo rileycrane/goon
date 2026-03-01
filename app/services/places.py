@@ -192,9 +192,8 @@ async def get_place_details(place_id: str) -> PlaceResult | None:
     except httpx.TimeoutException:
         logger.warning("Google Places detail timed out for place_id: %s", place_id)
         return None
-    except httpx.HTTPStatusError as exc:
-        logger.error("Google Places detail API error %d: %s", exc.response.status_code, exc.response.text[:200])
-        return None
+    except httpx.HTTPStatusError:
+        raise
     except Exception:
         logger.exception("Unexpected error fetching place details for %s", place_id)
         return None

@@ -100,6 +100,6 @@ async def test_indexes_exist(db):
         "idx_call_log_user", "idx_call_log_status",
         "idx_business_facts_lookup", "idx_business_facts_expiry",
         "idx_phone_scores_lookup", "idx_scheduled_tasks_due",
-        "idx_unregistered_phone",
+        "idx_unregistered_phone", "idx_unregistered_created",
     }
     assert expected == index_names

@@ -23,7 +23,7 @@ FORWARD_TWIML = """<?xml version="1.0" encoding="UTF-8"?>
 
 FALLBACK_TWIML = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Sorry, I'm having trouble connecting. Please try texting this number instead.</Say>
+  <Say>Sorry, I'm having technical difficulties. Please try texting this number instead.</Say>
   <Hangup/>
 </Response>"""
 

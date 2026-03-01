@@ -24,8 +24,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-MEMORY_CONTEXT_LIMIT = 20
-MEMORY_RECENT_LIMIT = 50
+MEMORY_CONTEXT_LIMIT = 5
+MEMORY_RECENT_LIMIT = 20
 USER_DATA_DIR = Path(settings.user_data_dir)
 
 
