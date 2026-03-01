@@ -5,9 +5,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.db.database import db, init_db
-from app.routes import admin, sms, stripe, vapi_events, voice
+from app.routes import admin, register, sms, stripe, vapi_events, voice
 from app.services.calls import process_retries
 from app.services.proactive import run_proactive_checks
 
@@ -65,11 +67,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Goon", version="0.1.0", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.base_url, "http://localhost:3000"],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+)
+
 app.include_router(sms.router, prefix="/sms", tags=["sms"])
 app.include_router(voice.router, prefix="/voice", tags=["voice"])
 app.include_router(vapi_events.router, prefix="/vapi", tags=["vapi"])
 app.include_router(stripe.router, prefix="/stripe", tags=["stripe"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(register.router, prefix="/register", tags=["register"])
 
 
 @app.get("/health")
