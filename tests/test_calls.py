@@ -14,6 +14,7 @@ from app.services.calls import (
     build_first_message,
     handle_call_failure,
     pre_call_check,
+    process_retries,
     schedule_retry,
 )
 
@@ -311,3 +312,108 @@ class TestScheduleRetry:
 
             mock_sms.assert_called_once()
             assert "giving up" in mock_sms.call_args[0][1].lower()
+
+
+# --- process_retries tests ---
+
+
+class TestProcessRetries:
+    @pytest.mark.asyncio
+    async def test_picks_up_due_retries(self, call_db):
+        """process_retries should re-initiate calls that are past retry_after."""
+        with patch("app.services.calls.db", call_db):
+            await _insert_test_user(call_db)
+            # Insert a call_log record with retry_pending status and past retry_after
+            past = (datetime.now() - timedelta(minutes=1)).isoformat()
+            await call_db.execute(
+                """INSERT INTO call_log
+                   (user_id, vapi_call_id, business_name, business_phone,
+                    place_id, task, task_type, status, retry_count, retry_after)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'retry_pending', 1, ?)""",
+                ["+15551234567", "call_retry_1", "Test Biz", "+15559876543",
+                 "place_abc", "What are your hours?", "info_query", past],
+            )
+
+            with patch(
+                "app.services.calls.initiate_outbound_call",
+                new_callable=AsyncMock,
+                return_value={"call_log_id": 99, "vapi_call_id": "new_call", "status": "in_progress"},
+            ) as mock_initiate:
+                count = await process_retries()
+
+            assert count == 1
+            mock_initiate.assert_called_once_with(
+                business_name="Test Biz",
+                business_phone="+15559876543",
+                task="What are your hours?",
+                user_id="+15551234567",
+                task_type="info_query",
+                place_id="place_abc",
+            )
+
+    @pytest.mark.asyncio
+    async def test_ignores_future_retries(self, call_db):
+        """process_retries should not pick up retries whose retry_after is in the future."""
+        with patch("app.services.calls.db", call_db):
+            await _insert_test_user(call_db)
+            future = (datetime.now() + timedelta(minutes=10)).isoformat()
+            await call_db.execute(
+                """INSERT INTO call_log
+                   (user_id, vapi_call_id, business_name, business_phone,
+                    place_id, task, task_type, status, retry_count, retry_after)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'retry_pending', 1, ?)""",
+                ["+15551234567", "call_future", "Test Biz", "+15559876543",
+                 "place_abc", "Check hours", "info_query", future],
+            )
+
+            with patch(
+                "app.services.calls.initiate_outbound_call",
+                new_callable=AsyncMock,
+            ) as mock_initiate:
+                count = await process_retries()
+
+            assert count == 0
+            mock_initiate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handles_call_failure_gracefully(self, call_db):
+        """process_retries should continue processing if one retry fails."""
+        with patch("app.services.calls.db", call_db):
+            await _insert_test_user(call_db)
+            past = (datetime.now() - timedelta(minutes=1)).isoformat()
+            # Insert two retry_pending records
+            for i, cid in enumerate(["call_fail", "call_ok"]):
+                await call_db.execute(
+                    """INSERT INTO call_log
+                       (user_id, vapi_call_id, business_name, business_phone,
+                        place_id, task, task_type, status, retry_count, retry_after)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'retry_pending', 1, ?)""",
+                    ["+15551234567", cid, f"Biz {i}", "+15559876543",
+                     "place_abc", "task", "info_query", past],
+                )
+
+            call_count = 0
+
+            async def side_effect(**kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise RuntimeError("Vapi API error")
+                return {"call_log_id": 99, "vapi_call_id": "new", "status": "in_progress"}
+
+            with patch(
+                "app.services.calls.initiate_outbound_call",
+                new_callable=AsyncMock,
+                side_effect=side_effect,
+            ):
+                count = await process_retries()
+
+            # Only the second one succeeded
+            assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_no_pending_retries(self, call_db):
+        """process_retries returns 0 when nothing is pending."""
+        with patch("app.services.calls.db", call_db):
+            count = await process_retries()
+        assert count == 0
