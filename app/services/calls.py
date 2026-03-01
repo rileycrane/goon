@@ -131,8 +131,9 @@ If you reach an automated phone system:
 - "Check our website": ask for the URL if you don't have it, hang up
 
 ## After Getting the Answer
-- Confirm by repeating back: "Just to confirm, [answer]. Great, thanks!"
-- Thank them and end the call
+- If they confirm success, just say "Great, thank you so much" and end the call
+- Do NOT repeat back details they just told you -- it sounds robotic
+- Keep the goodbye brief and natural
 """
 
     details = details or {}
@@ -162,23 +163,21 @@ If you reach an automated phone system:
 
 
 def build_first_message(task: str, task_type: str, details: dict | None = None) -> str:
-    """Build the opening message for the voice agent. Sound human."""
-    details = details or {}
-
-    if task_type == "reservation":
-        return (
-            f"Hi, I'd like to make a reservation for "
-            f"{details.get('party_size', 'two')} "
-            f"{details.get('date', 'tonight')} "
-            f"around {details.get('time', '7')}. "
-            f"Do you have anything available?"
-        )
-    elif task_type == "appointment":
-        return f"Hi, I'm looking to schedule an appointment. {task}"
-    elif task_type == "availability_check":
-        return f"Hi, quick question -- {task}"
-    else:
-        return f"Hi, {task}"
+    """Build the opening message for the voice agent. Sound human.
+    
+    Uses the natural language task description directly rather than
+    templating from structured fields -- the LLM already wrote it
+    in human-readable form.
+    """
+    # Rewrite the task as a natural first-person request
+    # e.g. "Make a reservation for 2" -> "I'd like to make a reservation for 2"
+    t = task.strip()
+    # If it starts with a verb/command, add "I'd like to"
+    command_starts = ["make", "book", "reserve", "schedule", "check", "ask", "find", "get", "call"]
+    first_word = t.split()[0].lower() if t else ""
+    if first_word in command_starts:
+        t = f"I'd like to {t[0].lower()}{t[1:]}"
+    return f"Hi, {t}"
 
 
 async def initiate_outbound_call(
@@ -228,13 +227,36 @@ async def initiate_outbound_call(
             },
             "voice": {
                 "provider": "11labs",
-                "voiceId": "pNInz6obpgDQGcFmaJgB",
+                "voiceId": "jBzLvP03992lMFEkj2kJ",
             },
             "firstMessage": first_message,
             "endCallFunctionEnabled": True,
-            "endCallMessage": "Thanks so much, have a great day!",
+            "endCallMessage": "thanks",
             "maxDurationSeconds": 180,
             "serverUrl": server_url,
+            "model": {
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-5-20250929",
+                "tools": [
+                    {
+                        "type": "dtmf",
+                        "function": {
+                            "name": "dtmf",
+                            "description": "Press a phone keypad button. Use this to navigate phone menus (IVR). For example, press '1' to talk to staff, '0' for operator.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "button": {
+                                        "type": "string",
+                                        "description": "The button to press: 0-9, *, or #"
+                                    }
+                                },
+                                "required": ["button"]
+                            }
+                        }
+                    }
+                ]
+            },
         },
     }
 
@@ -247,6 +269,8 @@ async def initiate_outbound_call(
             },
             json=payload,
         )
+        if resp.status_code >= 400:
+            logger.error("Vapi API error: %s %s", resp.status_code, resp.text)
         resp.raise_for_status()
         call_data = resp.json()
 

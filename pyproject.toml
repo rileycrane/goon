@@ -35,3 +35,6 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py312"
 line-length = 99
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

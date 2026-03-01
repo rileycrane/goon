@@ -13,3 +13,4 @@ data/
 .vscode/
 .idea/
 uv.lock
+.env~

@@ -14,6 +14,8 @@ from app.services.cache import check_cache
 from app.services.calls import initiate_outbound_call, pre_call_check
 from app.services.memory import load_memory, update_memory
 from app.services.places import format_place_for_llm, search_places
+from app.config.settings import settings
+from app.config.test_businesses import TEST_BUSINESSES
 from app.services.search import search_web
 
 logger = logging.getLogger(__name__)
@@ -268,6 +270,19 @@ async def _execute_tool(
             return result or "No cached answer found."
 
         elif tool_name == "search_places":
+            # Step 0: Check test businesses first
+            if settings.enable_test_businesses:
+                query_lower = tool_input["query"].lower()
+                for key, biz in TEST_BUSINESSES.items():
+                    if key in query_lower or biz["name"].lower() in query_lower:
+                        return (
+                            f"Name: {biz['name']}\n"
+                            f"Address: {biz['address']}\n"
+                            f"Phone: {biz['phone']}\n"
+                            f"Hours: {biz['hours']}\n"
+                            f"Open now: {biz['open_now']}\n"
+                            f"Reservable: {biz['attributes'].get('reservable', False)}"
+                        )
             places = await search_places(
                 query=tool_input["query"],
                 location=tool_input.get("location"),

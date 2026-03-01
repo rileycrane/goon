@@ -49,7 +49,7 @@ class Settings:
     enable_test_businesses: bool = (
         os.getenv("ENABLE_TEST_BUSINESSES", "false").lower() == "true"
     )
-    test_business_phone: str = os.getenv("TEST_BUSINESS_PHONE", "+14155559999")
+    test_business_phone: str = os.getenv("TEST_BUSINESS_PHONE", "+13308868676")
     test_mode_log_verbose: bool = (
         os.getenv("TEST_MODE_LOG_VERBOSE", "false").lower() == "true"
     )

@@ -57,7 +57,9 @@ async def _handle_end_of_call(event: dict) -> None:
         return
 
     transcript = event["message"].get("transcript", "")
-    ended_reason = call_data.get("endedReason", "unknown")
+    ended_reason = call_data.get("endedReason", call_data.get("ended_reason", "unknown"))
+    # Normalize: Vapi may send camelCase, kebab-case, or spaced
+    ended_reason = ended_reason.lower().replace(" ", "-").replace("_", "-")
     duration = call_data.get("duration")
 
     outcome = classify_call_outcome(ended_reason, transcript)
@@ -155,6 +157,11 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
     elif ended_reason == "max-duration-reached":
         outcome["reason"] = "timeout"
         outcome["retry"] = False  # Probably stuck on hold
+
+    # Catch-all: if we got a substantial transcript, likely success
+    if not outcome["success"] and transcript and len(transcript) > 200:
+        outcome["success"] = True
+        outcome["reason"] = "success_inferred"
 
     return outcome
 
