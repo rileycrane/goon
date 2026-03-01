@@ -60,6 +60,11 @@ async def send_sms(to: str, body: str) -> None:
 
 async def _send(to: str, body: str) -> None:
     """Send a single SMS via Twilio."""
-    from twilio.rest import Client
-    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-    client.messages.create(to=to, from_=settings.goon_number, body=body)
+    import logging
+
+    try:
+        from twilio.rest import Client
+        client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+        client.messages.create(to=to, from_=settings.goon_number, body=body)
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to send SMS to %s", to)

@@ -46,7 +46,12 @@ async def voice_webhook(request: Request) -> Response:
     logger.info("Inbound voice call from=%s sid=%s", caller, call_sid)
 
     # Auth check
-    user = await get_user(caller) if caller else None
+    try:
+        user = await get_user(caller) if caller else None
+    except Exception:
+        logger.exception("Auth lookup failed for voice call from %s", caller)
+        return Response(content=FALLBACK_TWIML, media_type="application/xml")
+
     if not user or not is_user_active(user):
         logger.info("Unauthorized caller: %s", caller)
         twiml = (

@@ -260,19 +260,28 @@ async def initiate_outbound_call(
         },
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{VAPI_BASE}/call/phone",
-            headers={
-                "Authorization": f"Bearer {settings.vapi_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        if resp.status_code >= 400:
-            logger.error("Vapi API error: %s %s", resp.status_code, resp.text)
-        resp.raise_for_status()
-        call_data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{VAPI_BASE}/call/phone",
+                headers={
+                    "Authorization": f"Bearer {settings.vapi_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            if resp.status_code >= 400:
+                logger.error("Vapi API error: %s %s", resp.status_code, resp.text)
+            resp.raise_for_status()
+            call_data = resp.json()
+    except httpx.TimeoutException:
+        logger.error("Vapi call initiation timed out for %s", business_name)
+        raise RuntimeError(f"Call to {business_name} timed out. Try again later.")
+    except httpx.HTTPStatusError:
+        raise RuntimeError(f"Could not initiate call to {business_name}. Service temporarily unavailable.")
+    except Exception:
+        logger.exception("Unexpected error initiating Vapi call to %s", business_name)
+        raise RuntimeError(f"Could not initiate call to {business_name}.")
 
     vapi_call_id = call_data.get("id", "")
 
@@ -302,64 +311,70 @@ async def handle_call_failure(record: dict, outcome: dict) -> None:
     user_id = record["user_id"]
     biz = record["business_name"]
 
-    if outcome["reason"] == "busy":
-        await send_sms(user_id, f"{biz}'s line is busy. Trying again in 5 min.")
-        await schedule_retry(record, delay_minutes=5)
+    try:
+        if outcome["reason"] == "busy":
+            await send_sms(user_id, f"{biz}'s line is busy. Trying again in 5 min.")
+            await schedule_retry(record, delay_minutes=5)
 
-    elif outcome["reason"] == "no-answer":
-        await send_sms(user_id, f"No answer at {biz}. I'll try again in 10 min.")
-        await schedule_retry(record, delay_minutes=10)
+        elif outcome["reason"] == "no-answer":
+            await send_sms(user_id, f"No answer at {biz}. I'll try again in 10 min.")
+            await schedule_retry(record, delay_minutes=10)
 
-    elif outcome["reason"] == "voicemail":
-        await send_sms(
-            user_id,
-            f"Got voicemail at {biz}. I'll try again in 30 min, "
-            f"or I can look online instead. Reply 'web' to skip the call.",
-        )
-        await schedule_retry(record, delay_minutes=30)
+        elif outcome["reason"] == "voicemail":
+            await send_sms(
+                user_id,
+                f"Got voicemail at {biz}. I'll try again in 30 min, "
+                f"or I can look online instead. Reply 'web' to skip the call.",
+            )
+            await schedule_retry(record, delay_minutes=30)
 
-    elif outcome["reason"] == "wrong_number":
-        await send_sms(
-            user_id,
-            f"That number doesn't seem right for {biz}. "
-            f"Do you have their number? Or I can look for another one.",
-        )
-        # Blacklist this number
-        if record.get("place_id"):
-            await update_phone_score(
-                record["place_id"], record["business_phone"],
-                {"success": False, "reason": "wrong_number"},
+        elif outcome["reason"] == "wrong_number":
+            await send_sms(
+                user_id,
+                f"That number doesn't seem right for {biz}. "
+                f"Do you have their number? Or I can look for another one.",
+            )
+            # Blacklist this number
+            if record.get("place_id"):
+                await update_phone_score(
+                    record["place_id"], record["business_phone"],
+                    {"success": False, "reason": "wrong_number"},
+                )
+
+        elif outcome["reason"] == "hung_up":
+            if record.get("retry_count", 0) < 1:
+                await send_sms(user_id, f"{biz} hung up. I'll try once more in a few minutes.")
+                await schedule_retry(record, delay_minutes=15)
+            else:
+                await send_sms(
+                    user_id,
+                    f"Couldn't get through to {biz}. "
+                    f"You might need to call them directly at {record['business_phone']}.",
+                )
+
+        elif outcome["reason"] == "timeout":
+            await send_sms(
+                user_id,
+                f"Was on hold too long at {biz}. Want me to try again later?",
             )
 
-    elif outcome["reason"] == "hung_up":
-        if record.get("retry_count", 0) < 1:
-            await send_sms(user_id, f"{biz} hung up. I'll try once more in a few minutes.")
-            await schedule_retry(record, delay_minutes=15)
         else:
             await send_sms(
                 user_id,
-                f"Couldn't get through to {biz}. "
-                f"You might need to call them directly at {record['business_phone']}.",
+                f"Had trouble reaching {biz}. "
+                f"Want me to try again or look online instead?",
             )
-
-    elif outcome["reason"] == "timeout":
-        await send_sms(
-            user_id,
-            f"Was on hold too long at {biz}. Want me to try again later?",
-        )
-
-    else:
-        await send_sms(
-            user_id,
-            f"Had trouble reaching {biz}. "
-            f"Want me to try again or look online instead?",
-        )
+    except Exception:
+        logger.exception("Error handling call failure for %s -> %s", record.get("vapi_call_id"), biz)
 
     # Update call log status
-    await db.execute(
-        "UPDATE call_log SET status=? WHERE vapi_call_id=?",
-        [f"failed_{outcome['reason']}", record["vapi_call_id"]],
-    )
+    try:
+        await db.execute(
+            "UPDATE call_log SET status=? WHERE vapi_call_id=?",
+            [f"failed_{outcome['reason']}", record["vapi_call_id"]],
+        )
+    except Exception:
+        logger.exception("Failed to update call_log status for %s", record.get("vapi_call_id"))
 
 
 async def schedule_retry(record: dict, delay_minutes: int) -> None:
@@ -374,14 +389,17 @@ async def schedule_retry(record: dict, delay_minutes: int) -> None:
         return
 
     retry_after = datetime.now() + timedelta(minutes=delay_minutes)
-    await db.execute(
-        """
-        UPDATE call_log SET status='retry_pending',
-            retry_count=?, retry_after=?
-        WHERE vapi_call_id=?
-        """,
-        [retry_count + 1, retry_after.isoformat(), record["vapi_call_id"]],
-    )
+    try:
+        await db.execute(
+            """
+            UPDATE call_log SET status='retry_pending',
+                retry_count=?, retry_after=?
+            WHERE vapi_call_id=?
+            """,
+            [retry_count + 1, retry_after.isoformat(), record["vapi_call_id"]],
+        )
+    except Exception:
+        logger.exception("Failed to schedule retry for %s", record.get("vapi_call_id"))
 
 
 async def process_retries() -> int:

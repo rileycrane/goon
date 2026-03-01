@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 API_BASE = "https://places.googleapis.com/v1"
 
@@ -149,13 +152,23 @@ async def search_places(
             }
         }
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            f"{API_BASE}/places:searchText",
-            headers=_headers(api_key, _SEARCH_FIELDS),
-            json=body,
-        )
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{API_BASE}/places:searchText",
+                headers=_headers(api_key, _SEARCH_FIELDS),
+                json=body,
+            )
+            resp.raise_for_status()
+    except httpx.TimeoutException:
+        logger.warning("Google Places search timed out for query: %s", query)
+        return []
+    except httpx.HTTPStatusError as exc:
+        logger.error("Google Places API error %d: %s", exc.response.status_code, exc.response.text[:200])
+        return []
+    except Exception:
+        logger.exception("Unexpected error searching Google Places")
+        return []
 
     data = resp.json()
     places = data.get("places", [])
@@ -166,15 +179,25 @@ async def get_place_details(place_id: str) -> PlaceResult | None:
     """Get detailed info for a single place by its place_id."""
     api_key = _get_api_key()
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            f"{API_BASE}/places/{place_id}",
-            headers=_headers(api_key, _DETAIL_FIELDS),
-            params={"languageCode": "en"},
-        )
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{API_BASE}/places/{place_id}",
+                headers=_headers(api_key, _DETAIL_FIELDS),
+                params={"languageCode": "en"},
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+    except httpx.TimeoutException:
+        logger.warning("Google Places detail timed out for place_id: %s", place_id)
+        return None
+    except httpx.HTTPStatusError as exc:
+        logger.error("Google Places detail API error %d: %s", exc.response.status_code, exc.response.text[:200])
+        return None
+    except Exception:
+        logger.exception("Unexpected error fetching place details for %s", place_id)
+        return None
 
     return _parse_place(resp.json())
 

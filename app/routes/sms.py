@@ -23,10 +23,13 @@ async def _log_message(
     user_id: str, direction: str, body: str, twilio_sid: str | None = None
 ) -> None:
     """Append to message_log table."""
-    await db.execute(
-        "INSERT INTO message_log (user_id, direction, body, twilio_sid) VALUES (?, ?, ?, ?)",
-        [user_id, direction, body, twilio_sid],
-    )
+    try:
+        await db.execute(
+            "INSERT INTO message_log (user_id, direction, body, twilio_sid) VALUES (?, ?, ?, ?)",
+            [user_id, direction, body, twilio_sid],
+        )
+    except Exception:
+        logger.exception("Failed to log message for user %s", user_id)
 
 
 async def _process_and_respond(user_id: str, phone: str, body: str) -> None:
@@ -49,7 +52,10 @@ async def _process_and_respond(user_id: str, phone: str, body: str) -> None:
             "Something went wrong on my end. Try again in a minute."
         )
 
-    await send_sms(phone, response_text)
+    try:
+        await send_sms(phone, response_text)
+    except Exception:
+        logger.exception("Failed to send response SMS to %s", phone)
     await _log_message(user_id, "out", response_text)
 
 

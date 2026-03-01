@@ -384,13 +384,26 @@ async def handle_message(user_id: str, message: str) -> str:
 
     # Agentic loop: LLM decides which tools to call
     for _ in range(MAX_TOOL_ROUNDS):
-        response = await client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=system,
-            tools=TOOLS,
-            messages=messages,
-        )
+        try:
+            response = await client.messages.create(
+                model=MODEL,
+                max_tokens=1024,
+                system=system,
+                tools=TOOLS,
+                messages=messages,
+            )
+        except anthropic.RateLimitError:
+            logger.warning("Anthropic rate limit hit for user %s", user_id)
+            result_text = "I'm a bit overloaded right now. Try again in a minute."
+            break
+        except anthropic.APIStatusError as exc:
+            logger.error("Anthropic API error %d: %s", exc.status_code, exc.message)
+            result_text = "Something went wrong on my end. Try again in a minute."
+            break
+        except Exception:
+            logger.exception("Unexpected error calling Anthropic API")
+            result_text = "Something went wrong on my end. Try again in a minute."
+            break
 
         # If no tool use, we have our final answer
         if response.stop_reason == "end_turn":

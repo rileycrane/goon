@@ -34,20 +34,31 @@ async def vapi_event(request: Request) -> dict:
 
     logger.info("Vapi event type=%s", msg_type)
 
-    if msg_type == "end-of-call-report":
-        await _handle_end_of_call(event)
-    elif msg_type == "status-update":
-        status = msg.get("status", "")
-        call_id = msg.get("call", {}).get("id", "")
-        logger.info("Vapi status update: call=%s status=%s", call_id, status)
+    try:
+        if msg_type == "end-of-call-report":
+            await _handle_end_of_call(event)
+        elif msg_type == "status-update":
+            status = msg.get("status", "")
+            call_id = msg.get("call", {}).get("id", "")
+            logger.info("Vapi status update: call=%s status=%s", call_id, status)
+    except Exception:
+        logger.exception("Unhandled error processing Vapi event type=%s", msg_type)
 
     return {"status": "ok"}
 
 
 async def _handle_end_of_call(event: dict) -> None:
     """Process an end-of-call report from Vapi."""
-    call_data = event["message"]["call"]
-    call_id = call_data["id"]
+    try:
+        msg = event.get("message", {})
+        call_data = msg.get("call", {})
+        call_id = call_data.get("id")
+        if not call_id:
+            logger.warning("Vapi end-of-call event missing call ID")
+            return
+    except Exception:
+        logger.exception("Failed to parse Vapi end-of-call event")
+        return
 
     record = await db.fetch_one(
         "SELECT * FROM call_log WHERE vapi_call_id = ?", [call_id],
@@ -56,7 +67,7 @@ async def _handle_end_of_call(event: dict) -> None:
         logger.warning("No call_log record for vapi_call_id=%s", call_id)
         return
 
-    transcript = event["message"].get("transcript", "")
+    transcript = msg.get("transcript", "")
     ended_reason = call_data.get("endedReason", call_data.get("ended_reason", "unknown"))
     # Normalize: Vapi may send camelCase, kebab-case, or spaced
     ended_reason = ended_reason.lower().replace(" ", "-").replace("_", "-")
@@ -66,52 +77,71 @@ async def _handle_end_of_call(event: dict) -> None:
 
     # Update phone score
     if record.get("place_id"):
-        await update_phone_score(
-            record["place_id"], record["business_phone"], outcome,
-        )
+        try:
+            await update_phone_score(
+                record["place_id"], record["business_phone"], outcome,
+            )
+        except Exception:
+            logger.exception("Failed to update phone score for call %s", call_id)
 
     if outcome["success"]:
-        summary = await summarize_call_result(transcript, record["task"])
+        try:
+            summary = await summarize_call_result(transcript, record["task"])
+        except Exception:
+            logger.exception("Failed to summarize call %s", call_id)
+            summary = f"Call to {record['business_name']} completed. I wasn't able to summarize the result -- please try asking again."
 
         # Text user the result
         await send_sms(record["user_id"], summary)
 
         # Cache the fact
         if record.get("place_id"):
-            await store_fact(
-                place_id=record["place_id"],
-                business_name=record["business_name"],
-                fact_type=record.get("task_type", "general"),
-                question=record["task"],
-                answer=summary,
-                source="phone_call",
-            )
+            try:
+                await store_fact(
+                    place_id=record["place_id"],
+                    business_name=record["business_name"],
+                    fact_type=record.get("task_type", "general"),
+                    question=record["task"],
+                    answer=summary,
+                    source="phone_call",
+                )
+            except Exception:
+                logger.exception("Failed to cache fact for call %s", call_id)
 
         # Update memory
-        await append_conversation(
-            record["user_id"], "out",
-            f"[Call result: {record['business_name']}] {summary}",
-            metadata={"type": "call_result", "business": record["business_name"]},
-        )
+        try:
+            await append_conversation(
+                record["user_id"], "out",
+                f"[Call result: {record['business_name']}] {summary}",
+                metadata={"type": "call_result", "business": record["business_name"]},
+            )
+        except Exception:
+            logger.exception("Failed to append conversation for call %s", call_id)
 
         # Update call log
-        await db.execute(
-            """
-            UPDATE call_log SET status='success', result=?,
-                transcript=?, duration_seconds=?
-            WHERE vapi_call_id=?
-            """,
-            [summary, transcript, duration, call_id],
-        )
+        try:
+            await db.execute(
+                """
+                UPDATE call_log SET status='success', result=?,
+                    transcript=?, duration_seconds=?
+                WHERE vapi_call_id=?
+                """,
+                [summary, transcript, duration, call_id],
+            )
+        except Exception:
+            logger.exception("Failed to update call_log for successful call %s", call_id)
         logger.info("Call success: %s -> %s", call_id, record["business_name"])
 
     else:
         await handle_call_failure(record, outcome)
         # Store transcript even on failure
-        await db.execute(
-            "UPDATE call_log SET transcript=?, duration_seconds=? WHERE vapi_call_id=?",
-            [transcript, duration, call_id],
-        )
+        try:
+            await db.execute(
+                "UPDATE call_log SET transcript=?, duration_seconds=? WHERE vapi_call_id=?",
+                [transcript, duration, call_id],
+            )
+        except Exception:
+            logger.exception("Failed to update call_log for failed call %s", call_id)
         logger.info(
             "Call failed: %s -> %s reason=%s",
             call_id, record["business_name"], outcome["reason"],
@@ -169,18 +199,24 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
 async def summarize_call_result(transcript: str, task: str) -> str:
     """Summarize a call transcript into an SMS-length response."""
     client = anthropic.AsyncAnthropic()
-    response = await client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=200,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Summarize this phone call result in 1-2 sentences for an SMS. "
-                    f"Be concise, no emoji. The user's original request was: {task}\n\n"
-                    f"Transcript:\n{transcript[:2000]}"
-                ),
-            }
-        ],
-    )
-    return response.content[0].text.strip()
+    try:
+        response = await client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=200,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Summarize this phone call result in 1-2 sentences for an SMS. "
+                        f"Be concise, no emoji. The user's original request was: {task}\n\n"
+                        f"Transcript:\n{transcript[:2000]}"
+                    ),
+                }
+            ],
+        )
+        return response.content[0].text.strip()
+    except Exception:
+        logger.exception("Failed to summarize call transcript")
+        # Fallback: return a truncated transcript snippet
+        snippet = transcript[:150].strip() if transcript else "Call completed"
+        return f"Call result: {snippet}..."

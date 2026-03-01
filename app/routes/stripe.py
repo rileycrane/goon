@@ -1,3 +1,5 @@
+import logging
+
 import stripe
 from fastapi import APIRouter, Header, HTTPException, Request
 
@@ -7,6 +9,8 @@ from app.services.billing import (
     handle_subscription_deleted,
     handle_subscription_updated,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -36,22 +40,26 @@ async def stripe_webhook(
     event_type = event["type"]
     data = event["data"]["object"]
 
-    if event_type == "checkout.session.completed":
-        user = await handle_checkout_completed(data)
-        if user:
-            from app.services.sms import send_sms
+    try:
+        if event_type == "checkout.session.completed":
+            user = await handle_checkout_completed(data)
+            if user:
+                from app.services.sms import send_sms
 
-            await send_sms(
-                user["phone"],
-                f"Hey {user['name']}, this is Goon. Text me when you "
-                "need something done -- restaurant reservations, business "
-                "questions, anything. I'll handle it.",
-            )
+                await send_sms(
+                    user["phone"],
+                    f"Hey {user['name']}, this is Goon. Text me when you "
+                    "need something done -- restaurant reservations, business "
+                    "questions, anything. I'll handle it.",
+                )
 
-    elif event_type == "customer.subscription.updated":
-        await handle_subscription_updated(data)
+        elif event_type == "customer.subscription.updated":
+            await handle_subscription_updated(data)
 
-    elif event_type == "customer.subscription.deleted":
-        await handle_subscription_deleted(data)
+        elif event_type == "customer.subscription.deleted":
+            await handle_subscription_deleted(data)
+    except Exception:
+        logger.exception("Error processing Stripe event %s", event_type)
+        raise HTTPException(status_code=500, detail="Webhook handler error")
 
     return {"status": "ok"}

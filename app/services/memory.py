@@ -13,6 +13,7 @@ Storage format:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ from pathlib import Path
 import aiofiles
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 MEMORY_CONTEXT_LIMIT = 20
 MEMORY_RECENT_LIMIT = 50
@@ -132,8 +135,11 @@ async def append_conversation(
     if metadata:
         entry.update(metadata)
 
-    async with aiofiles.open(user_dir / "conversations.jsonl", "a") as f:
-        await f.write(json.dumps(entry) + "\n")
+    try:
+        async with aiofiles.open(user_dir / "conversations.jsonl", "a") as f:
+            await f.write(json.dumps(entry) + "\n")
+    except Exception:
+        logger.exception("Failed to append conversation for user %s", user_id)
 
 
 async def update_memory(
@@ -167,14 +173,15 @@ async def apply_profile_updates(user_dir: Path, updates: list[dict]) -> None:
         f'- [{u.get("category", "general")}] {u.get("content", "")}' for u in updates
     )
 
-    client = anthropic.AsyncAnthropic()
-    response = await client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2000,
-        messages=[
-            {
-                "role": "user",
-                "content": f"""Current profile:
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Current profile:
 
 {current}
 
@@ -189,14 +196,19 @@ Rules:
 - Be concise — this is a reference doc, not prose
 
 Return ONLY the updated markdown.""",
-            }
-        ],
-    )
+                }
+            ],
+        )
+        updated_profile = response.content[0].text
+    except Exception:
+        logger.exception("Failed to generate profile update via LLM")
+        return
 
-    updated_profile = response.content[0].text
-
-    async with aiofiles.open(profile_path, "w") as f:
-        await f.write(updated_profile)
+    try:
+        async with aiofiles.open(profile_path, "w") as f:
+            await f.write(updated_profile)
+    except Exception:
+        logger.exception("Failed to write updated profile for %s", user_dir)
 
 
 async def save_profile(user_id: str, profile_text: str) -> None:

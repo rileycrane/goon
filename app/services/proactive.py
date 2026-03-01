@@ -185,14 +185,15 @@ async def compose_proactive_message(
     trigger_summary = "\n".join(trigger_lines)
     profile_excerpt = memory.profile[:500]
 
-    client = anthropic.AsyncAnthropic()
-    response = await client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=200,
-        messages=[
-            {
-                "role": "user",
-                "content": f"""Compose a short proactive SMS (under 160 chars, no emoji) for a user.
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=200,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Compose a short proactive SMS (under 160 chars, no emoji) for a user.
 
 Triggers:
 {trigger_summary}
@@ -209,17 +210,20 @@ Rules:
 6. If you genuinely can't compose something useful, respond with exactly: SKIP
 
 Return ONLY the SMS text, nothing else.""",
-            }
-        ],
-    )
+                }
+            ],
+        )
 
-    text = response.content[0].text.strip()
-    if text.upper() == "SKIP":
+        text = response.content[0].text.strip()
+        if text.upper() == "SKIP":
+            return None
+        # Strip any quotes the LLM might wrap the message in
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1]
+        return text
+    except Exception:
+        logger.exception("Failed to compose proactive message for user %s", user_id)
         return None
-    # Strip any quotes the LLM might wrap the message in
-    if text.startswith('"') and text.endswith('"'):
-        text = text[1:-1]
-    return text
 
 
 async def run_proactive_checks() -> int:
