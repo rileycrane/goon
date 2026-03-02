@@ -9,6 +9,7 @@ import httpx
 
 from app.config.settings import settings
 from app.db.database import db
+from app.prompts.soul import get_voice_soul
 from app.services.cache import get_ivr_map, get_phone_score, update_phone_score
 from app.services.places import get_place_details, is_chain_business
 from app.services.sms import send_sms
@@ -86,18 +87,22 @@ def build_call_prompt(
     ivr_map: dict | None = None,
 ) -> str:
     """Build the system prompt for the Vapi voice agent."""
-    base = f"""You are calling {business_name}.
+    soul = get_voice_soul()
 
-## Your Task
-{task}
+    base = f"""{soul}
 
-## Rules
-- Sound like a regular person calling. Be natural, friendly, efficient.
-- Do NOT say "I'm calling on behalf of" or "I'm an AI" or "I'm an assistant"
-- Just ask the question like a normal customer would
-- Get straight to the point after a brief "hi"
+---
+
+## This Call
+
+You are calling **{business_name}**.
+
+**Task:** {task}
+
+**Caller identity:**
 - If they ask for a name, say "{user_name}"
 - If they ask for a callback number, say "{settings.goon_number}"
+- Do NOT say "I'm calling on behalf of" or "I'm an AI" or "I'm an assistant"
 
 ## IVR / Phone Tree Navigation
 If you reach an automated phone system:
@@ -116,48 +121,25 @@ If you reach an automated phone system:
         for key, label in menu.items():
             base += f"- Press {key}: {label}\n"
 
-    base += """
-## Hold
-- If put on hold, wait up to 90 seconds
-- After 90 seconds, hang up
-
-## Edge Cases
-- Voicemail: hang up (do not leave a message)
-- Hostile/rude: "Sorry to bother you, thanks" -> hang up
-- Wrong number/disconnected: hang up immediately
-- Employee needs clarification: rephrase your question with more context
-- Complex answer (full menu, long list): capture key facts, don't need everything
-- "We don't give that info over phone": thank them, hang up
-- "Check our website": ask for the URL if you don't have it, hang up
-
-## After Getting the Answer — CRITICAL
-- Once they confirm your request is handled, say "Great, thank you so much" and END THE CALL IMMEDIATELY
-- Do NOT ask "anything else?" or "is there anything else I can help with?" — YOU called THEM
-- Do NOT repeat back details they just told you -- it sounds robotic
-- Do NOT linger. One brief "thanks, bye" and hang up. You are the caller, not the receptionist.
-"""
-
     details = details or {}
     if task_type == "reservation":
         base += f"""
-## Reservation-Specific
-1. "Hi, I'd like to make a reservation."
-2. Party size: {details.get('party_size', 'ask user')}
-3. Date: {details.get('date', 'ask user')}
-4. Time: {details.get('time', 'ask user')}
-5. Name: {user_name}
-6. If preferred time unavailable: ask what's available nearby and note it
+## Reservation Details
+1. Party size: {details.get('party_size', 'ask user')}
+2. Date: {details.get('date', 'ask user')}
+3. Time: {details.get('time', 'ask user')}
+4. Name: {user_name}
+5. If preferred time unavailable: ask what's available nearby and note it
    (do NOT book a different time without user confirmation)
-7. Get confirmation number if they offer one
+6. Get confirmation number if they offer one
 """
     elif task_type == "appointment":
         base += f"""
-## Appointment-Specific
-1. "Hi, I'd like to schedule an appointment."
-2. Service: {details.get('service', task)}
-3. Preferred date/time: {details.get('date', 'flexible')} {details.get('time', 'flexible')}
-4. Name: {user_name}
-5. If they need a phone number: {settings.goon_number}
+## Appointment Details
+1. Service: {details.get('service', task)}
+2. Preferred date/time: {details.get('date', 'flexible')} {details.get('time', 'flexible')}
+3. Name: {user_name}
+4. If they need a phone number: {settings.goon_number}
 """
 
     return base
