@@ -16,6 +16,7 @@ from app.services.memory import load_memory, update_memory
 from app.services.places import format_place_for_llm, search_places
 from app.config.settings import settings
 from app.config.test_businesses import TEST_BUSINESSES
+from app.prompts.soul import get_sms_soul
 from app.services.search import search_web
 
 logger = logging.getLogger(__name__)
@@ -218,19 +219,16 @@ def build_system_prompt(user: dict, memory) -> str:
     """Build the system prompt with user context and resolution ladder."""
     name = user.get("name", "there")
     phone = user.get("phone", user.get("id", ""))
+    soul = get_sms_soul()
 
-    return f"""You are Goon, a personal AI concierge accessible via SMS.
+    return f"""{soul}
+
+---
+
 You are texting with {name} (phone: {phone}).
 Today: {datetime.now().isoformat()}
 
 {RESOLUTION_LADDER_INSTRUCTION}
-
-## SMS Constraints
-- Target 160 chars for simple answers (one SMS segment)
-- Max 320 chars for detailed answers (two segments)
-- Never use emoji (forces unicode encoding, halves SMS capacity)
-- Be terse, warm, useful. Not robotic, not chatty.
-- If a call is in progress, say so briefly: "Calling [business] now. Back in a few."
 
 ## User Memory
 {memory.profile}
@@ -241,14 +239,13 @@ Today: {datetime.now().isoformat()}
 ## Active Tasks
 {memory.formatted_tasks}
 
-## Guidelines
+## Operational Guidelines
 - Confirm before calling for reservations/appointments (get details right)
 - For simple info questions, just answer -- don't ask permission to look it up
 - Update memory when you learn something new about the user
 - If the user's location matters and you don't know it, ask
 - After a call completes, text the result concisely
-- If a question is ambiguous, answer with what you have + ask for clarification
-  (don't just ask -- give them something useful immediately)
+- If a call is in progress, say so briefly: "Calling [business] now. Back in a few."
 """
 
 

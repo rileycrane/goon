@@ -142,7 +142,7 @@ class TestBuildCallPrompt:
             user_name="Riley",
             details={"party_size": "4", "date": "Friday", "time": "7pm"},
         )
-        assert "Reservation-Specific" in prompt
+        assert "Reservation Details" in prompt
         assert "4" in prompt
         assert "Friday" in prompt
 
@@ -154,7 +154,7 @@ class TestBuildCallPrompt:
             user_name="Riley",
             details={"service": "haircut", "date": "tomorrow"},
         )
-        assert "Appointment-Specific" in prompt
+        assert "Appointment Details" in prompt
         assert "haircut" in prompt
 
     def test_ivr_map_included(self):
