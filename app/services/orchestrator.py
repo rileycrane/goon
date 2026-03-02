@@ -11,7 +11,7 @@ import anthropic
 from app.db.database import db
 from app.services.auth import get_user
 from app.services.cache import check_cache
-from app.services.calls import initiate_outbound_call, pre_call_check
+from app.services.calls import check_duplicate_call, initiate_outbound_call, pre_call_check
 from app.services.memory import load_memory, update_memory
 from app.services.places import format_place_for_llm, search_places
 from app.config.settings import settings
@@ -252,6 +252,26 @@ Today: {datetime.now().isoformat()}
 """
 
 
+# ---- Test business helper ----
+
+def _check_test_business(query: str) -> str | None:
+    """Check if query matches a test business. Returns formatted info or None."""
+    if not settings.enable_test_businesses:
+        return None
+    query_lower = query.lower()
+    for key, biz in TEST_BUSINESSES.items():
+        if key in query_lower or biz["name"].lower() in query_lower:
+            return (
+                f"Name: {biz['name']}\n"
+                f"Address: {biz['address']}\n"
+                f"Phone: {biz['phone']}\n"
+                f"Hours: {biz['hours']}\n"
+                f"Open now: {biz['open_now']}\n"
+                f"Reservable: {biz['attributes'].get('reservable', False)}"
+            )
+    return None
+
+
 # ---- Tool execution dispatch ----
 
 async def _execute_tool(
@@ -270,19 +290,10 @@ async def _execute_tool(
             return result or "No cached answer found."
 
         elif tool_name == "search_places":
-            # Step 0: Check test businesses first
-            if settings.enable_test_businesses:
-                query_lower = tool_input["query"].lower()
-                for key, biz in TEST_BUSINESSES.items():
-                    if key in query_lower or biz["name"].lower() in query_lower:
-                        return (
-                            f"Name: {biz['name']}\n"
-                            f"Address: {biz['address']}\n"
-                            f"Phone: {biz['phone']}\n"
-                            f"Hours: {biz['hours']}\n"
-                            f"Open now: {biz['open_now']}\n"
-                            f"Reservable: {biz['attributes'].get('reservable', False)}"
-                        )
+            # Check test businesses before hitting Google Places API
+            test_result = _check_test_business(tool_input["query"])
+            if test_result:
+                return test_result
             places = await search_places(
                 query=tool_input["query"],
                 location=tool_input.get("location"),
@@ -312,7 +323,24 @@ async def _execute_tool(
                 return f"Pre-call check FAILED: {issues_text}"
 
         elif tool_name == "call_business":
+            # Route test businesses to test phone before calling
+            if settings.enable_test_businesses:
+                query = tool_input["business_name"].lower()
+                for key, biz in TEST_BUSINESSES.items():
+                    if key in query or biz["name"].lower() in query:
+                        tool_input["business_phone"] = biz["phone"]
+                        tool_input["place_id"] = biz["place_id"]
+                        break
             user_id = user.get("id", user.get("phone", ""))
+            # Check for duplicate in-progress call
+            existing = await check_duplicate_call(
+                user_id, tool_input["business_phone"],
+            )
+            if existing:
+                return (
+                    f"A call to {tool_input['business_name']} is already in progress "
+                    f"(call id: {existing['vapi_call_id']}). Wait for it to complete."
+                )
             user_name = user.get("name", "")
             call_result = await initiate_outbound_call(
                 business_name=tool_input["business_name"],

@@ -31,18 +31,28 @@ async def vapi_event(request: Request) -> dict:
     event = await request.json()
     msg = event.get("message", {})
     msg_type = msg.get("type", "")
+    call_id = msg.get("call", {}).get("id", "unknown")
 
-    logger.info("Vapi event type=%s", msg_type)
+    logger.info("Vapi event received: type=%s call_id=%s", msg_type, call_id)
 
     try:
         if msg_type == "end-of-call-report":
+            logger.info("Processing end-of-call-report for call_id=%s", call_id)
             await _handle_end_of_call(event)
+            logger.info("Finished processing end-of-call-report for call_id=%s", call_id)
         elif msg_type == "status-update":
             status = msg.get("status", "")
-            call_id = msg.get("call", {}).get("id", "")
             logger.info("Vapi status update: call=%s status=%s", call_id, status)
+            # Update call_log on terminal status events that aren't end-of-call
+            if status in ("ended", "failed"):
+                await _ensure_call_status_updated(call_id, status)
     except Exception:
-        logger.exception("Unhandled error processing Vapi event type=%s", msg_type)
+        logger.exception(
+            "Unhandled error processing Vapi event type=%s call_id=%s", msg_type, call_id,
+        )
+        # On any error, try to mark the call as failed so it doesn't stay in_progress
+        if call_id != "unknown":
+            await _mark_call_failed_on_error(call_id, msg_type)
 
     return {"status": "ok"}
 
@@ -74,6 +84,11 @@ async def _handle_end_of_call(event: dict) -> None:
     duration = call_data.get("duration")
 
     outcome = classify_call_outcome(ended_reason, transcript)
+    logger.info(
+        "Call %s outcome: success=%s reason=%s ended_reason=%s transcript_len=%d",
+        call_id, outcome["success"], outcome["reason"], ended_reason,
+        len(transcript) if transcript else 0,
+    )
 
     # Update phone score
     if record.get("place_id"):
@@ -220,3 +235,46 @@ async def summarize_call_result(transcript: str, task: str) -> str:
         # Fallback: return a truncated transcript snippet
         snippet = transcript[:150].strip() if transcript else "Call completed"
         return f"Call result: {snippet}..."
+
+
+async def _ensure_call_status_updated(call_id: str, status: str) -> None:
+    """Ensure call_log status is updated on terminal status events.
+
+    If we receive an 'ended' or 'failed' status-update but the end-of-call-report
+    hasn't arrived (or was lost), this prevents calls from staying in_progress forever.
+    """
+    record = await db.fetch_one(
+        "SELECT status FROM call_log WHERE vapi_call_id = ?", [call_id],
+    )
+    if not record:
+        logger.warning("Status update for unknown call_id=%s status=%s", call_id, status)
+        return
+    if record["status"] == "in_progress":
+        logger.info(
+            "Call %s got status=%s while still in_progress, "
+            "waiting for end-of-call-report before updating",
+            call_id, status,
+        )
+
+
+async def _mark_call_failed_on_error(call_id: str, event_type: str) -> None:
+    """Safety net: if event processing errors out, mark the call as failed.
+
+    This prevents calls from getting stuck in in_progress status forever
+    when an exception occurs during webhook processing.
+    """
+    try:
+        record = await db.fetch_one(
+            "SELECT status FROM call_log WHERE vapi_call_id = ?", [call_id],
+        )
+        if record and record["status"] == "in_progress":
+            logger.warning(
+                "Marking call %s as failed due to error processing event %s",
+                call_id, event_type,
+            )
+            await db.execute(
+                "UPDATE call_log SET status='failed_webhook_error' WHERE vapi_call_id=?",
+                [call_id],
+            )
+    except Exception:
+        logger.exception("Failed to mark call %s as failed after error", call_id)

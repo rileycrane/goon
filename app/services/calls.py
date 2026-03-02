@@ -197,6 +197,21 @@ def build_first_message(task: str, task_type: str, details: dict | None = None) 
     return f"Hi, {t}. {RECORDING_DISCLOSURE}"
 
 
+async def check_duplicate_call(user_id: str, business_phone: str) -> dict | None:
+    """Check if there's already an in-progress call for this user+business.
+
+    Returns the existing call record if found, None otherwise.
+    """
+    record = await db.fetch_one(
+        """
+        SELECT * FROM call_log
+        WHERE user_id = ? AND business_phone = ? AND status = 'in_progress'
+        """,
+        [user_id, business_phone],
+    )
+    return record
+
+
 async def initiate_outbound_call(
     business_name: str,
     business_phone: str,
@@ -215,6 +230,19 @@ async def initiate_outbound_call(
         raise RuntimeError("VAPI_API_KEY not configured")
     if not settings.vapi_phone_number_id:
         raise RuntimeError("VAPI_PHONE_NUMBER_ID not configured")
+
+    # Check for duplicate in-progress call to same business
+    existing = await check_duplicate_call(user_id, business_phone)
+    if existing:
+        logger.info(
+            "Duplicate call blocked: user=%s biz=%s existing_call=%s",
+            user_id, business_name, existing["vapi_call_id"],
+        )
+        return {
+            "call_log_id": existing["id"],
+            "vapi_call_id": existing["vapi_call_id"],
+            "status": "already_in_progress",
+        }
 
     # Look up IVR map if we have one
     ivr_map = None
