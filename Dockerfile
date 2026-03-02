@@ -8,6 +8,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY app/ app/
+COPY scripts/ scripts/
 
 RUN mkdir -p /data/users
 
