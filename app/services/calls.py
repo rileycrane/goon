@@ -91,11 +91,17 @@ def build_call_prompt(
 ## Your Task
 {task}
 
+## Recording Disclosure (MANDATORY — Legal Requirement)
+- Your VERY FIRST words must include the recording disclosure
+- Say: "Just so you know, this call may be recorded for quality purposes."
+- Say this ONCE at the start, then proceed naturally with your task
+- Do NOT skip this step. It is a legal requirement for two-party consent states.
+
 ## Rules
 - Sound like a regular person calling. Be natural, friendly, efficient.
 - Do NOT say "I'm calling on behalf of" or "I'm an AI" or "I'm an assistant"
 - Just ask the question like a normal customer would
-- Get straight to the point after a brief "hi"
+- After the recording disclosure, get straight to the point
 - If they ask for a name, say "{user_name}"
 - If they ask for a callback number, say "{settings.goon_number}"
 
@@ -163,20 +169,24 @@ If you reach an automated phone system:
     return base
 
 
+RECORDING_DISCLOSURE = "Just so you know, this call may be recorded for quality purposes."
+
+
 def build_first_message(task: str, task_type: str, details: dict | None = None) -> str:
     """Build the opening message for the voice agent. Sound human.
 
     Different task types get different openings to sound natural.
+    Includes two-party consent recording disclosure as required by law.
     """
     details = details or {}
 
     if task_type == "reservation":
         party = details.get("party_size", "2")
-        return f"Hi, I'd like to make a reservation for {party}."
+        return f"Hi, I'd like to make a reservation for {party}. {RECORDING_DISCLOSURE}"
     elif task_type == "appointment":
-        return "Hi, I'd like to schedule an appointment."
+        return f"Hi, I'd like to schedule an appointment. {RECORDING_DISCLOSURE}"
     elif task_type == "availability_check":
-        return f"Hi, I have a quick question: {task}"
+        return f"Hi, I have a quick question. {RECORDING_DISCLOSURE} {task}"
 
     # Generic: rewrite task as a natural first-person request
     t = task.strip()
@@ -184,7 +194,7 @@ def build_first_message(task: str, task_type: str, details: dict | None = None) 
     first_word = t.split()[0].lower() if t else ""
     if first_word in command_starts:
         t = f"I'd like to {t[0].lower()}{t[1:]}"
-    return f"Hi, {t}"
+    return f"Hi, {t}. {RECORDING_DISCLOSURE}"
 
 
 async def initiate_outbound_call(
@@ -260,6 +270,7 @@ async def initiate_outbound_call(
             "endCallMessage": "thanks",
             "maxDurationSeconds": 180,
             "serverUrl": server_url,
+            "recordingEnabled": settings.enable_call_recording,
         },
     }
 

@@ -46,6 +46,11 @@ class Settings:
     base_url: str = os.getenv("BASE_URL", "http://localhost:8000")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "")
 
+    # Call recording (two-party consent compliance)
+    enable_call_recording: bool = (
+        os.getenv("ENABLE_CALL_RECORDING", "true").lower() == "true"
+    )
+
     # Test mode
     enable_test_businesses: bool = (
         os.getenv("ENABLE_TEST_BUSINESSES", "false").lower() == "true"

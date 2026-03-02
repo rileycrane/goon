@@ -123,6 +123,17 @@ class TestBuildCallPrompt:
         assert "Riley" in prompt
         assert "Do NOT" in prompt
 
+    def test_recording_disclosure_in_prompt(self):
+        prompt = build_call_prompt(
+            task="What time do you close?",
+            task_type="info_query",
+            business_name="Pizza Palace",
+            user_name="Riley",
+        )
+        assert "Recording Disclosure" in prompt
+        assert "recorded for quality purposes" in prompt
+        assert "legal requirement" in prompt.lower()
+
     def test_reservation_prompt(self):
         prompt = build_call_prompt(
             task="Make a reservation",
@@ -171,19 +182,28 @@ class TestBuildFirstMessage:
         )
         assert "reservation" in msg.lower()
         assert "2" in msg
+        assert "recorded for quality purposes" in msg
 
     def test_appointment(self):
         msg = build_first_message("Schedule a haircut", "appointment")
         assert "appointment" in msg.lower()
+        assert "recorded for quality purposes" in msg
 
     def test_availability(self):
         msg = build_first_message("Do you have the new iPhone in stock?", "availability_check")
         assert "quick question" in msg.lower()
+        assert "recorded for quality purposes" in msg
 
     def test_generic(self):
         msg = build_first_message("What are your hours?", "info_query")
         assert "Hi" in msg
         assert "hours" in msg
+        assert "recorded for quality purposes" in msg
+
+    def test_disclosure_constant(self):
+        from app.services.calls import RECORDING_DISCLOSURE
+        assert "recorded" in RECORDING_DISCLOSURE
+        assert "quality" in RECORDING_DISCLOSURE
 
 
 # --- handle_call_failure tests ---
