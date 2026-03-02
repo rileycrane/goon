@@ -9,9 +9,10 @@ from fastapi import APIRouter, Request
 
 from app.config.settings import settings
 from app.db.database import db
+from app.services.auth import get_user, is_user_active
 from app.services.cache import store_fact, update_phone_score
 from app.services.calls import handle_call_failure
-from app.services.memory import append_conversation
+from app.services.memory import append_conversation, load_memory
 from app.services.sms import send_sms
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ async def vapi_event(request: Request) -> dict:
     """Handle Vapi call event webhook.
 
     Vapi sends events for:
+      - assistant-request: inbound call needs assistant config (we do auth here)
       - status-update: call started, ringing, in-progress, ended
       - end-of-call-report: final transcript, duration, ended reason
       - tool-calls: when the voice agent invokes a tool (future)
@@ -34,6 +36,11 @@ async def vapi_event(request: Request) -> dict:
     call_id = msg.get("call", {}).get("id", "unknown")
 
     logger.info("Vapi event received: type=%s call_id=%s", msg_type, call_id)
+
+    # assistant-request: Vapi asks us which assistant to use for an inbound call.
+    # This is where we do auth — reject unregistered/inactive callers.
+    if msg_type == "assistant-request":
+        return await _handle_assistant_request(event)
 
     try:
         if msg_type == "end-of-call-report":
@@ -55,6 +62,92 @@ async def vapi_event(request: Request) -> dict:
             await _mark_call_failed_on_error(call_id, msg_type)
 
     return {"status": "ok"}
+
+
+async def _handle_assistant_request(event: dict) -> dict:
+    """Handle Vapi assistant-request for inbound calls.
+
+    When someone calls the Goon number, Vapi asks our server which assistant
+    to use. We check auth here and return the assistant config with the
+    caller's memory injected into the system prompt.
+    """
+    msg = event.get("message", {})
+    call_data = msg.get("call", {})
+    caller = call_data.get("customer", {}).get("number", "")
+
+    logger.info("Assistant request for inbound call from=%s", caller)
+
+    # Auth check
+    user = await get_user(caller) if caller else None
+
+    if not user or not is_user_active(user):
+        logger.info("Rejecting unauthorized inbound caller: %s", caller)
+        return {
+            "assistant": {
+                "model": {
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "messages": [{
+                        "role": "system",
+                        "content": "Tell the caller that this number is not registered with Goon. They can sign up at the website. Be brief and polite, then end the call.",
+                    }],
+                },
+                "voice": {
+                    "provider": "11labs",
+                    "voiceId": "jBzLvP03992lMFEkj2kJ",
+                },
+                "firstMessage": "Sorry, this number isn't registered with Goon. Visit our website to sign up. Goodbye.",
+                "endCallFunctionEnabled": True,
+                "maxDurationSeconds": 15,
+            }
+        }
+
+    # Authorized caller — build a personalized assistant
+    user_name = user.get("name", "there")
+    memory = await load_memory(caller)
+
+    system_prompt = f"""You are Goon, a personal AI concierge. You're on a voice call with {user_name}.
+
+You can help them with anything they'd normally text you about:
+- Answer questions about local businesses (hours, availability, etc.)
+- Make reservations or appointments by calling businesses
+- Look things up (Google Places, web search)
+- Remember their preferences
+
+## User Memory
+{memory.profile}
+
+## Voice Call Guidelines
+- Be natural, warm, and efficient — like a helpful friend
+- Keep responses concise (this is a phone call, not a text)
+- If they ask you to call a business, let them know you'll do it and text them the result
+- If you need to look something up, say "Let me check on that" briefly
+- Don't recite long lists — summarize and offer to text details
+
+## SMS Constraints (for any texts you send)
+- Target 160 chars, no emoji
+"""
+
+    logger.info("Returning assistant config for authorized caller=%s (%s)", caller, user_name)
+
+    return {
+        "assistant": {
+            "model": {
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "system", "content": system_prompt}],
+            },
+            "voice": {
+                "provider": "11labs",
+                "voiceId": "jBzLvP03992lMFEkj2kJ",
+            },
+            "firstMessage": f"Hey {user_name}, what can I help you with?",
+            "endCallFunctionEnabled": True,
+            "endCallMessage": "Alright, talk to you later!",
+            "maxDurationSeconds": 300,
+            "serverUrl": f"{settings.base_url}/vapi/events",
+        }
+    }
 
 
 async def _handle_end_of_call(event: dict) -> None:
