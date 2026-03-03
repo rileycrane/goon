@@ -31,6 +31,8 @@ def get_user_tier(user: dict) -> str:
             return "active"
     if status == "free":
         return "free"
+    if status == "pending_consent":
+        return "none"
     return "none"
 
 
@@ -160,4 +162,36 @@ async def set_signups_enabled(enabled: bool) -> None:
            VALUES ('signups_enabled', ?, CURRENT_TIMESTAMP)
            ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP""",
         [value, value],
+    )
+
+
+async def create_pending_user(phone: str) -> dict:
+    """Create a user in pending_consent state (awaiting opt-in)."""
+    await db.execute(
+        """INSERT INTO users (id, phone, subscription_status, consent_state)
+           VALUES (?, ?, 'pending_consent', 'fresh')
+           ON CONFLICT(id) DO NOTHING""",
+        [phone, phone],
+    )
+    return await get_user(phone)  # type: ignore[return-value]
+
+
+async def confirm_user(phone: str) -> None:
+    """Confirm a pending user's consent -- move to free tier."""
+    now = datetime.now().isoformat()
+    await db.execute(
+        """UPDATE users SET
+               subscription_status = 'free',
+               consent_state = 'confirmed',
+               consent_confirmed_at = ?
+           WHERE phone = ?""",
+        [now, phone],
+    )
+
+
+async def decline_user(phone: str) -> None:
+    """Mark a user as declined -- never contact again."""
+    await db.execute(
+        "UPDATE users SET consent_state = 'declined' WHERE phone = ?",
+        [phone],
     )

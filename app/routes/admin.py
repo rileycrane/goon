@@ -180,22 +180,39 @@ async def get_user_profile(
     phone: str,
     x_admin_password: Optional[str] = Header(None),
 ) -> dict:
+    """Return USER.md content for a user (legacy endpoint)."""
+    _check_admin(x_admin_password)
+    return await _read_user_md(phone, "USER.md", "profile", legacy="profile.md")
+
+
+@router.get("/users/{phone}/user-model")
+async def get_user_model(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
     """Return USER.md content for a user."""
     _check_admin(x_admin_password)
-    user_dir = USER_DATA_DIR / phone
-    user_md = user_dir / "USER.md"
-    legacy = user_dir / "profile.md"
+    return await _read_user_md(phone, "USER.md", "content", legacy="profile.md")
 
-    content = ""
-    try:
-        if user_md.exists():
-            content = user_md.read_text()
-        elif legacy.exists():
-            content = legacy.read_text()
-    except Exception:
-        logger.exception("Failed to read profile for %s", phone)
 
-    return {"phone": phone, "profile": content}
+@router.get("/users/{phone}/soul")
+async def get_user_soul(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return SOUL.md content for a user (agent's self-model)."""
+    _check_admin(x_admin_password)
+    return await _read_user_md(phone, "SOUL.md", "content")
+
+
+@router.get("/users/{phone}/playbook")
+async def get_user_playbook(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return AGENTS.md content for a user (operational playbook)."""
+    _check_admin(x_admin_password)
+    return await _read_user_md(phone, "AGENTS.md", "content")
 
 
 @router.get("/users/{phone}/memory")
@@ -205,17 +222,26 @@ async def get_user_memory(
 ) -> dict:
     """Return MEMORY.md content for a user."""
     _check_admin(x_admin_password)
+    return await _read_user_md(phone, "MEMORY.md", "memory")
+
+
+async def _read_user_md(
+    phone: str, filename: str, key: str, legacy: str | None = None
+) -> dict:
+    """Read a markdown file from a user's data directory."""
     user_dir = USER_DATA_DIR / phone
-    memory_md = user_dir / "MEMORY.md"
+    target = user_dir / filename
 
     content = ""
     try:
-        if memory_md.exists():
-            content = memory_md.read_text()
+        if target.exists():
+            content = target.read_text()
+        elif legacy and (user_dir / legacy).exists():
+            content = (user_dir / legacy).read_text()
     except Exception:
-        logger.exception("Failed to read memory for %s", phone)
+        logger.exception("Failed to read %s for %s", filename, phone)
 
-    return {"phone": phone, "memory": content}
+    return {"phone": phone, key: content}
 
 
 @router.get("/users/{phone}/conversations")

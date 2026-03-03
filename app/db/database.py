@@ -71,6 +71,10 @@ class Database:
             "ALTER TABLE users ADD COLUMN free_messages_used INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE users ADD COLUMN calls_used_this_period INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE users ADD COLUMN billing_period_start TIMESTAMP",
+            # Consent flow columns — default to 'confirmed' so existing users are grandfathered
+            "ALTER TABLE users ADD COLUMN consent_state TEXT NOT NULL DEFAULT 'confirmed'",
+            "ALTER TABLE users ADD COLUMN consent_sent_at TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN consent_confirmed_at TIMESTAMP",
         ]
         for sql in migrations:
             try:

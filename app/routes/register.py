@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 
@@ -5,8 +6,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
 from app.db.database import db
-from app.services.auth import create_free_user, get_signups_enabled, get_user
+from app.services.auth import get_signups_enabled
 from app.services.billing import create_checkout_session
+from app.services.consent import handle_web_signup
 from app.services.sms import send_sms
 
 logger = logging.getLogger(__name__)
@@ -30,24 +32,18 @@ class PhoneStartRequest(BaseModel):
 
 @router.post("/start")
 async def start_via_phone(req: PhoneStartRequest):
-    """Landing page submits phone number. Creates free user + sends first SMS."""
+    """Landing page submits phone number. Delegates to consent flow.
+
+    Always returns the same response regardless of user state (privacy-preserving).
+    """
     signups_on = await get_signups_enabled()
 
     if signups_on:
-        existing = await get_user(req.phone)
-        if existing:
-            return {"status": "ok", "message": "already_registered"}
-
-        await create_free_user(req.phone)
-        await send_sms(
-            req.phone,
-            "Hey, this is Hold Plz. I look up info and call businesses "
-            "so you don't have to. You've got 10 free messages -- go ahead, "
-            "ask me something.",
-        )
-        return {"status": "ok", "message": "sms_sent"}
+        # Fire and forget -- consent flow handles all states
+        asyncio.create_task(handle_web_signup(req.phone))
+        return {"status": "ok", "message": "check_texts"}
     else:
-        # Signups disabled — log attempt
+        # Signups disabled -- log attempt
         try:
             await db.execute(
                 "INSERT INTO phone_start_attempts (phone) VALUES (?)",
@@ -55,12 +51,14 @@ async def start_via_phone(req: PhoneStartRequest):
             )
         except Exception:
             logger.exception("Failed to log phone start attempt")
-        await send_sms(
-            req.phone,
-            "Hold Plz isn't open to new users right now. "
-            "We'll text you when there's a spot.",
+        asyncio.create_task(
+            send_sms(
+                req.phone,
+                "Hold Plz isn't open to new users right now. "
+                "We'll text you when there's a spot.",
+            )
         )
-        return {"status": "ok", "message": "waitlisted"}
+        return {"status": "ok", "message": "check_texts"}
 
 
 class CheckoutRequest(BaseModel):

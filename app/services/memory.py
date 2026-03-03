@@ -38,8 +38,10 @@ USER_DATA_DIR = Path(settings.user_data_dir)
 class UserMemory:
     """In-memory representation of a user's persistent state."""
 
-    profile: str
-    long_term_memory: str = ""
+    soul: str                          # SOUL.md -- agent's self-model for this user
+    profile: str                       # USER.md -- who the user is
+    long_term_memory: str = ""         # MEMORY.md
+    agents: str = ""                   # AGENTS.md -- operational playbook
     recent: list[dict] = field(default_factory=list)
     active_tasks: list[dict] = field(default_factory=list)
 
@@ -83,14 +85,18 @@ async def load_memory(user_id: str) -> UserMemory:
     """Load a user's full memory state from disk."""
     user_dir = _user_dir(user_id)
 
+    soul = await _load_soul(user_dir, user_id)
     profile = await _load_profile(user_dir, user_id)
     long_term = await _load_long_term_memory(user_dir)
+    agents = await _load_agents(user_dir)
     recent = await _load_conversations(user_dir)
     tasks = await _load_tasks(user_dir)
 
     return UserMemory(
+        soul=soul,
         profile=profile,
         long_term_memory=long_term,
+        agents=agents,
         recent=recent[-MEMORY_RECENT_LIMIT:],
         active_tasks=tasks,
     )
@@ -121,6 +127,28 @@ async def _load_profile(user_dir: Path, user_id: str) -> str:
         pass
 
     return f"# New User\nPhone: {user_id}\nNo profile yet."
+
+
+async def _load_soul(user_dir: Path, user_id: str) -> str:
+    """Load SOUL.md or fall back to global soul."""
+    soul_path = user_dir / "SOUL.md"
+    try:
+        async with aiofiles.open(soul_path, "r") as f:
+            return await f.read()
+    except FileNotFoundError:
+        # Fall back to global soul
+        from app.prompts.soul import get_sms_soul
+        return get_sms_soul()
+
+
+async def _load_agents(user_dir: Path) -> str:
+    """Load AGENTS.md (operational playbook) if it exists."""
+    agents_path = user_dir / "AGENTS.md"
+    try:
+        async with aiofiles.open(agents_path, "r") as f:
+            return await f.read()
+    except FileNotFoundError:
+        return ""
 
 
 async def _load_long_term_memory(user_dir: Path) -> str:
@@ -415,3 +443,215 @@ async def get_business_conversations(
         m for m in all_convos if business_lower in m.get("text", "").lower()
     ]
     return matching[-limit:]
+
+
+async def seed_soul(user_id: str) -> None:
+    """Create initial SOUL.md for a new user from global soul template."""
+    user_dir = _user_dir(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    soul_path = user_dir / "SOUL.md"
+    if soul_path.exists():
+        return
+
+    from app.prompts.soul import get_sms_soul
+    base = get_sms_soul()
+    initial = f"""{base}
+
+---
+## About This Relationship
+This is a new user. I don't know them yet. Pay attention to:
+- How formal/casual they are
+- Whether they like banter or just want answers
+- What kinds of businesses they ask about
+- Their location (ask if needed)
+
+This file is mine to evolve. As I learn who I am for this person, I'll update it.
+"""
+    async with aiofiles.open(soul_path, "w") as f:
+        await f.write(initial)
+
+
+async def update_soul_file(user_id: str, observation: str) -> str:
+    """Merge an observation into the user's SOUL.md via LLM."""
+    import anthropic
+
+    user_dir = _user_dir(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    soul_path = user_dir / "SOUL.md"
+
+    current = await _load_soul(user_dir, user_id)
+
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Current SOUL.md (your self-model for this user):
+
+{current}
+
+New observation about how you should be for this user:
+{observation}
+
+Update the SOUL.md to incorporate this observation. Rules:
+- Preserve the core personality sections
+- Update the "About This Relationship" section with new insights
+- Add specific adaptations (e.g., "be more direct", "they like suggestions")
+- Keep it concise and actionable
+- This is YOUR self-model -- how you should be for this person
+
+Return ONLY the updated markdown.""",
+                }
+            ],
+        )
+        updated = response.content[0].text.strip()
+    except Exception:
+        logger.exception("Failed to update SOUL.md for user %s", user_id)
+        return "Failed to update soul."
+
+    try:
+        async with aiofiles.open(soul_path, "w") as f:
+            await f.write(updated)
+        return "Soul updated."
+    except Exception:
+        logger.exception("Failed to write SOUL.md for user %s", user_id)
+        return "Failed to save soul update."
+
+
+async def update_playbook_file(user_id: str, lesson: str) -> str:
+    """Merge a lesson into the user's AGENTS.md via LLM."""
+    import anthropic
+
+    user_dir = _user_dir(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    agents_path = user_dir / "AGENTS.md"
+
+    current = await _load_agents(user_dir)
+
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Current AGENTS.md (operational playbook for this user):
+
+{current or "(empty -- first entry)"}
+
+New lesson or strategy to record:
+{lesson}
+
+Update the AGENTS.md to incorporate this. Rules:
+- Organize by category (mistakes to avoid, effective strategies, user-specific shortcuts)
+- Be specific and actionable (not vague)
+- If this contradicts an existing entry, update it
+- Keep it concise -- bullet points, not prose
+
+Return ONLY the updated markdown.""",
+                }
+            ],
+        )
+        updated = response.content[0].text.strip()
+    except Exception:
+        logger.exception("Failed to update AGENTS.md for user %s", user_id)
+        return "Failed to update playbook."
+
+    try:
+        async with aiofiles.open(agents_path, "w") as f:
+            await f.write(updated)
+        return "Playbook updated."
+    except Exception:
+        logger.exception("Failed to write AGENTS.md for user %s", user_id)
+        return "Failed to save playbook update."
+
+
+async def reflect(user_id: str) -> None:
+    """Periodic reflection: daily logs -> MEMORY.md, optionally update SOUL.md and AGENTS.md."""
+    await distill_memory(user_id)
+    await _reflect_on_soul(user_id)
+    await _reflect_on_playbook(user_id)
+
+
+async def _reflect_on_soul(user_id: str) -> None:
+    """Review if the agent's self-model needs updating based on recent interactions."""
+    import anthropic
+
+    user_dir = _user_dir(user_id)
+    soul = await _load_soul(user_dir, user_id)
+    memory = await _load_long_term_memory(user_dir)
+
+    if not memory:
+        return
+
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Review this self-model and recent memory. Has anything changed about how you should be for this person?
+
+Current SOUL.md:
+{soul[:1500]}
+
+Recent MEMORY.md:
+{memory[:1500]}
+
+If something has changed, respond with UPDATE: followed by what to change.
+If nothing has changed, respond with just: NO_CHANGE""",
+                }
+            ],
+        )
+        text = response.content[0].text.strip()
+        if text.startswith("UPDATE:"):
+            observation = text[7:].strip()
+            await update_soul_file(user_id, observation)
+    except Exception:
+        logger.exception("Failed soul reflection for user %s", user_id)
+
+
+async def _reflect_on_playbook(user_id: str) -> None:
+    """Review if the operational playbook needs updating."""
+    import anthropic
+
+    user_dir = _user_dir(user_id)
+    agents = await _load_agents(user_dir)
+    memory = await _load_long_term_memory(user_dir)
+
+    if not memory:
+        return
+
+    try:
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Review this operational playbook and recent memory. Any new lessons or strategies?
+
+Current AGENTS.md:
+{agents[:1500] if agents else "(empty)"}
+
+Recent MEMORY.md:
+{memory[:1500]}
+
+If there's a new lesson, respond with LESSON: followed by the lesson.
+If nothing new, respond with just: NO_CHANGE""",
+                }
+            ],
+        )
+        text = response.content[0].text.strip()
+        if text.startswith("LESSON:"):
+            lesson = text[7:].strip()
+            await update_playbook_file(user_id, lesson)
+    except Exception:
+        logger.exception("Failed playbook reflection for user %s", user_id)

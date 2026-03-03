@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS users (
     calls_used_this_period INTEGER NOT NULL DEFAULT 0,
     billing_period_start TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    allowlisted BOOLEAN NOT NULL DEFAULT FALSE  -- manual override for testers
+    allowlisted BOOLEAN NOT NULL DEFAULT FALSE,  -- manual override for testers
+    consent_state TEXT NOT NULL DEFAULT 'fresh',  -- fresh | confirmed | declined
+    consent_sent_at TIMESTAMP,
+    consent_confirmed_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS message_log (

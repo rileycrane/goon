@@ -16,7 +16,6 @@ from app.services.memory import load_memory, update_memory
 from app.services.places import format_place_for_llm, search_places
 from app.config.settings import settings
 from app.config.test_businesses import TEST_BUSINESSES
-from app.prompts.soul import get_sms_soul
 from app.services.search import search_web
 
 logger = logging.getLogger(__name__)
@@ -202,6 +201,43 @@ TOOLS: list[dict] = [
             "required": ["message", "when"],
         },
     },
+    {
+        "name": "update_soul",
+        "description": (
+            "Update your own SOUL.md -- your self-model for this user. "
+            "Call this when you learn something about how you should be for "
+            "this person (e.g., they prefer brevity, or they like when you "
+            "suggest things proactively)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observation": {
+                    "type": "string",
+                    "description": "What you learned about how to be for this user",
+                },
+            },
+            "required": ["observation"],
+        },
+    },
+    {
+        "name": "update_playbook",
+        "description": (
+            "Update your AGENTS.md -- your operational playbook for this user. "
+            "Call this when you learn a lesson, make a mistake, or discover "
+            "an effective strategy."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lesson": {
+                    "type": "string",
+                    "description": "The lesson or strategy to record",
+                },
+            },
+            "required": ["lesson"],
+        },
+    },
 ]
 
 
@@ -225,7 +261,6 @@ def build_system_prompt(
     """Build the system prompt with user context and resolution ladder."""
     name = user.get("name", "there")
     phone = user.get("phone", user.get("id", ""))
-    soul = get_sms_soul()
 
     # Free tier context
     free_tier_section = ""
@@ -248,7 +283,12 @@ Don't hard-sell. Mention it once, then move on.
 User has {calls_remaining} calls remaining this billing period (of {quota}).
 """
 
-    return f"""{soul}
+    # Playbook section
+    playbook_section = ""
+    if memory.agents:
+        playbook_section = f"## Operational Playbook (AGENTS.md)\n{memory.agents}"
+
+    return f"""{memory.soul}
 
 ---
 
@@ -258,8 +298,10 @@ Today: {datetime.now().isoformat()}
 {RESOLUTION_LADDER_INSTRUCTION}
 {free_tier_section}
 
-## User Memory
+## Who They Are (USER.md)
 {memory.profile}
+
+{playbook_section}
 
 {memory.long_term_memory_section}
 
@@ -273,6 +315,8 @@ Today: {datetime.now().isoformat()}
 - Confirm before calling for reservations/appointments (get details right)
 - For simple info questions, just answer -- don't ask permission to look it up
 - Update memory when you learn something new about the user
+- Use update_soul when you learn how you should adapt for this person
+- Use update_playbook when you learn a lesson or discover an effective strategy
 - If the user's location matters and you don't know it, ask
 - After a call completes, text the result concisely
 - If a call is in progress, say so briefly: "Calling [business] now. Back in a few."
@@ -445,6 +489,16 @@ async def _execute_tool(
                 [user_id, message, trigger, when],
             )
             return f"Followup scheduled for {when}."
+
+        elif tool_name == "update_soul":
+            from app.services.memory import update_soul_file
+            user_id = user.get("id", user.get("phone", ""))
+            return await update_soul_file(user_id, tool_input["observation"])
+
+        elif tool_name == "update_playbook":
+            from app.services.memory import update_playbook_file
+            user_id = user.get("id", user.get("phone", ""))
+            return await update_playbook_file(user_id, tool_input["lesson"])
 
         else:
             return f"Unknown tool: {tool_name}"

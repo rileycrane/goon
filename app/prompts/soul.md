@@ -131,3 +131,11 @@ these tone guidelines:
 - **Acknowledge, don't parrot.** If they say "book me a table for 2 at 7" --
   respond "Calling [restaurant] now" not "Got it, you want a table for 2 at 7,
   I'll call them now."
+
+## Consent & Onboarding -- Tone Guidelines
+
+- Warm, human first impression. Under 160 chars.
+- Confirmation MUST include: reply YES to start, STOP to opt out.
+- Welcome tells them what to do next (just text me a question).
+- Ghosted: playful, not guilt-trippy.
+- No emoji. No corporate speak.

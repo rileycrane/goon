@@ -8,15 +8,17 @@ import ConversationView from "../../components/ConversationView";
 import CallCard from "../../components/CallCard";
 import StatsCard from "../../components/StatsCard";
 
-const TABS = ["Overview", "Soul", "Memory", "Conversations", "Calls"];
+const TABS = ["Overview", "Soul", "User", "Memory", "Playbook", "Conversations", "Calls"];
 
 export default function UserDetailPage() {
   const params = useParams();
   const phone = decodeURIComponent(params.phone as string);
   const [tab, setTab] = useState("Overview");
   const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState("");
+  const [soul, setSoul] = useState("");
+  const [userModel, setUserModel] = useState("");
   const [memory, setMemory] = useState("");
+  const [playbook, setPlaybook] = useState("");
   const [conversations, setConversations] = useState<any[]>([]);
   const [bizConversations, setBizConversations] = useState<any>(null);
   const [calls, setCalls] = useState<any[]>([]);
@@ -32,13 +34,21 @@ export default function UserDetailPage() {
 
   // Load data lazily per tab
   useEffect(() => {
-    if (tab === "Soul" && !profile) {
-      adminFetch(`/admin/users/${enc}/profile`).then((d) =>
-        setProfile(d.profile || "")
+    if (tab === "Soul" && !soul) {
+      adminFetch(`/admin/users/${enc}/soul`).then((d) =>
+        setSoul(d.content || "")
+      );
+    } else if (tab === "User" && !userModel) {
+      adminFetch(`/admin/users/${enc}/user-model`).then((d) =>
+        setUserModel(d.content || "")
       );
     } else if (tab === "Memory" && !memory) {
       adminFetch(`/admin/users/${enc}/memory`).then((d) =>
         setMemory(d.memory || "")
+      );
+    } else if (tab === "Playbook" && !playbook) {
+      adminFetch(`/admin/users/${enc}/playbook`).then((d) =>
+        setPlaybook(d.content || "")
       );
     } else if (tab === "Conversations" && !bizConversations) {
       adminFetch(`/admin/users/${enc}/conversations/businesses`).then(
@@ -49,7 +59,7 @@ export default function UserDetailPage() {
         setCalls(d.calls || [])
       );
     }
-  }, [tab, enc, profile, memory, bizConversations, calls.length]);
+  }, [tab, enc, soul, userModel, memory, playbook, bizConversations, calls.length]);
 
   if (error) return <p style={{ color: "#e74c3c" }}>Error: {error}</p>;
   if (!user) return <p style={{ color: "var(--text-muted)" }}>Loading...</p>;
@@ -137,8 +147,10 @@ export default function UserDetailPage() {
         </div>
       )}
 
-      {tab === "Soul" && <MarkdownViewer content={profile} />}
+      {tab === "Soul" && <MarkdownViewer content={soul} />}
+      {tab === "User" && <MarkdownViewer content={userModel} />}
       {tab === "Memory" && <MarkdownViewer content={memory} />}
+      {tab === "Playbook" && <MarkdownViewer content={playbook} />}
 
       {tab === "Conversations" && (
         <div>

@@ -33,7 +33,7 @@ def get_voice_soul() -> str:
         "Who You Are",
         "Personality",
         "Values",
-        "Voice Agent — Tone by Scenario",
+        "Voice Agent -- Tone by Scenario",
     ])
 
 
@@ -45,5 +45,15 @@ def get_sms_soul() -> str:
         "Personality",
         "Values",
         "Boundaries",
-        "SMS — Tone Guidelines",
+        "SMS -- Tone Guidelines",
+    ])
+
+
+def get_consent_soul() -> str:
+    """Return soul sections relevant to consent/onboarding messages."""
+    text = _load()
+    return _extract_sections(text, [
+        "Who You Are",
+        "Personality",
+        "Consent & Onboarding -- Tone Guidelines",
     ])

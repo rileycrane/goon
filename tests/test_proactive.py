@@ -196,7 +196,7 @@ async def test_profile_pattern_recurring_service(user_data_dir):
 """
     (user_data_dir / "profile.md").write_text(profile_text)
 
-    memory = UserMemory(profile=profile_text, recent=[])
+    memory = UserMemory(soul="", profile=profile_text, recent=[])
 
     with patch("app.services.proactive.load_memory", return_value=memory):
         triggers = await _check_profile_patterns("+15551234567", today)
@@ -218,7 +218,7 @@ async def test_profile_pattern_friday_dinner():
 """
     friday_9am = datetime(2026, 3, 6, 9, 0)  # March 6, 2026 is a Friday
 
-    memory = UserMemory(profile=profile_text, recent=[])
+    memory = UserMemory(soul="", profile=profile_text, recent=[])
 
     with patch("app.services.proactive.load_memory", return_value=memory):
         triggers = await _check_profile_patterns("+15551234567", friday_9am)
@@ -237,6 +237,7 @@ async def test_profile_pattern_friday_skips_if_already_mentioned():
     friday_9am = datetime(2026, 3, 6, 9, 0)
 
     memory = UserMemory(
+        soul="",
         profile=profile_text,
         recent=[
             {"timestamp": "2026-03-06T08:30:00", "text": "Book me dinner at Delfina"},
@@ -263,7 +264,7 @@ async def test_compose_calls_llm():
     """compose_proactive_message calls Claude and returns the text."""
     from app.services.memory import UserMemory
 
-    memory = UserMemory(profile="# Test User", recent=[])
+    memory = UserMemory(soul="", profile="# Test User", recent=[])
 
     mock_response = AsyncMock()
     mock_response.content = [AsyncMock(text="Haircut is due! Want me to call Joe's?")]
@@ -289,7 +290,7 @@ async def test_compose_returns_none_on_skip():
     """If the LLM says SKIP, return None."""
     from app.services.memory import UserMemory
 
-    memory = UserMemory(profile="# Test User", recent=[])
+    memory = UserMemory(soul="", profile="# Test User", recent=[])
 
     mock_response = AsyncMock()
     mock_response.content = [AsyncMock(text="SKIP")]

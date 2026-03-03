@@ -43,7 +43,7 @@ def user_dir(tmp_data_dir, user_id):
 
 class TestUserMemory:
     def test_formatted_recent_empty(self):
-        mem = UserMemory(profile="", recent=[])
+        mem = UserMemory(soul="", profile="", recent=[])
         assert mem.formatted_recent == ""
 
     def test_formatted_recent_respects_limit(self):
@@ -51,13 +51,14 @@ class TestUserMemory:
             {"timestamp": f"2026-02-28T10:0{i}:00", "direction": "in", "text": f"msg {i}"}
             for i in range(10)
         ]
-        mem = UserMemory(profile="", recent=messages)
+        mem = UserMemory(soul="", profile="", recent=messages)
         lines = mem.formatted_recent.strip().split("\n")
         # Default MEMORY_CONTEXT_LIMIT is 5
         assert len(lines) == 5
 
     def test_formatted_recent_direction_labels(self):
         mem = UserMemory(
+            soul="",
             profile="",
             recent=[
                 {"timestamp": "2026-02-28T10:00:00", "direction": "in", "text": "hello"},
@@ -69,11 +70,12 @@ class TestUserMemory:
         assert "You: hi there" in result
 
     def test_formatted_tasks_empty(self):
-        mem = UserMemory(profile="", active_tasks=[])
+        mem = UserMemory(soul="", profile="", active_tasks=[])
         assert mem.formatted_tasks == "(no active tasks)"
 
     def test_formatted_tasks_with_items(self):
         mem = UserMemory(
+            soul="",
             profile="",
             active_tasks=[
                 {"status": "pending", "description": "Call Delfina"},
