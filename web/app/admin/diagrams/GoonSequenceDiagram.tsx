@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 
+type Step = { from: number; to: number; label: string };
+type Flow = { title: string; example: string; steps: Step[] };
+type Actor = { id: number; label: string; sub: string; color: string; icon: string };
+
 // ── Actors ──────────────────────────────────────────────────────────────
 // Every box that can appear on a lifeline. Flows reference these by id.
-const actors = [
+const actors: Actor[] = [
   { id: 0,  label: "You",           sub: "(Phone)",        color: "#3b82f6", icon: "\uD83D\uDCF1" },
   { id: 1,  label: "Twilio",        sub: "(SMS/Voice)",    color: "#ef4444", icon: "\uD83D\uDCE1" },
   { id: 2,  label: "Orchestrator",  sub: "(The Brain)",    color: "#8b5cf6", icon: "\uD83E\uDDE0" },
@@ -27,7 +31,7 @@ const actors = [
 ];
 
 // ── Flow categories for the tab groups ──────────────────────────────────
-const flowCategories = {
+const flowCategories: Record<string, string[]> = {
   "Core Flows": ["sms_simple", "sms_call_full", "voice_inbound"],
   "Billing & Access": ["free_tier_paywall", "upgrade_flow"],
   "Intelligence": ["memory_loop", "biz_intel_loop"],
@@ -37,7 +41,7 @@ const flowCategories = {
 };
 
 // ── Flows ───────────────────────────────────────────────────────────────
-const flows = {
+const flows: Record<string, Flow> = {
 
   // ╔══════════════════════════════════════════════════════════════════════
   // ║  CORE FLOWS
@@ -412,11 +416,11 @@ export default function GoonSequenceDiagram() {
   const [activeFlow, setActiveFlow] = useState("sms_call_full");
   const [currentStep, setCurrentStep] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playInterval, setPlayInterval] = useState(null);
+  const [playInterval, setPlayInterval] = useState<ReturnType<typeof setInterval> | null>(null);
 
   const flow = flows[activeFlow];
 
-  const usedActorIds = [...new Set(flow.steps.flatMap((s) => [s.from, s.to]))];
+  const usedActorIds = [...new Set(flow.steps.flatMap((s: Step) => [s.from, s.to]))];
   const usedActors = actors.filter((a) => usedActorIds.includes(a.id));
 
   const colWidth = 130;
@@ -425,7 +429,7 @@ export default function GoonSequenceDiagram() {
   const headerHeight = 100;
   const totalHeight = headerHeight + flow.steps.length * stepHeight + 60;
 
-  const getX = (actorId) => {
+  const getX = (actorId: number) => {
     const idx = usedActors.findIndex((a) => a.id === actorId);
     return idx * colWidth + colWidth / 2;
   };
@@ -455,7 +459,7 @@ export default function GoonSequenceDiagram() {
     setPlayInterval(null);
   };
 
-  const selectFlow = (key) => {
+  const selectFlow = (key: string) => {
     if (playInterval) clearInterval(playInterval);
     setActiveFlow(key);
     setCurrentStep(-1);
@@ -599,7 +603,7 @@ export default function GoonSequenceDiagram() {
               })}
 
               {/* Arrows */}
-              {flow.steps.map((step, i) => {
+              {flow.steps.map((step: Step, i: number) => {
                 if (i > currentStep) return null;
 
                 const fromX = getX(step.from);
@@ -608,7 +612,7 @@ export default function GoonSequenceDiagram() {
                 const isCurrentStep = i === currentStep;
                 const isSelfCall = step.from === step.to;
 
-                const fromActor = actors.find((a) => a.id === step.from);
+                const fromActor = actors.find((a) => a.id === step.from)!;
                 const arrowColor = isCurrentStep
                   ? fromActor.color
                   : fromActor.color + "88";

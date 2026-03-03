@@ -12,6 +12,7 @@ from app.db.database import db, init_db
 from app.routes import admin, register, sms, stripe, vapi_events, voice
 from app.services.calls import process_retries
 from app.services.proactive import run_proactive_checks
+from app.services.scheduler import process_queued_calls
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ _background_tasks: list[asyncio.Task] = []
 
 PROACTIVE_CHECK_INTERVAL = 3600  # 1 hour (checks are idempotent; 8am logic is inside)
 RETRY_CHECK_INTERVAL = 300  # 5 minutes
+QUEUED_CALL_CHECK_INTERVAL = 300  # 5 minutes
 
 
 async def _periodic(coro_fn, interval: int, name: str) -> None:
@@ -53,6 +55,12 @@ async def lifespan(app: FastAPI):
             name="retry-scheduler",
         )
     )
+    _background_tasks.append(
+        asyncio.create_task(
+            _periodic(process_queued_calls, QUEUED_CALL_CHECK_INTERVAL, "queued-calls"),
+            name="queued-calls-scheduler",
+        )
+    )
 
     yield
 
@@ -75,8 +83,8 @@ app.add_middleware(
         "https://www.holdplz.ai",
         "https://holdplz.ai",
     ],
-    allow_methods=["POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Admin-Password"],
 )
 
 app.include_router(sms.router, prefix="/sms", tags=["sms"])

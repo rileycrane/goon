@@ -114,6 +114,40 @@ CREATE TABLE IF NOT EXISTS phone_start_attempts (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS business_profiles (
+    place_id TEXT PRIMARY KEY,
+    business_name TEXT NOT NULL,
+    lat REAL,
+    lng REAL,
+    address TEXT,
+    phone TEXT,
+    total_calls INTEGER NOT NULL DEFAULT 0,
+    successful_calls INTEGER NOT NULL DEFAULT 0,
+    total_queries INTEGER NOT NULL DEFAULT 0,
+    avg_hold_time_seconds REAL,
+    avg_call_duration_seconds REAL,
+    known_contacts TEXT,       -- JSON: [{"name": "Maria", "role": "host"}]
+    busy_patterns TEXT,        -- JSON
+    notes TEXT,                -- LLM-generated insights
+    first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS failure_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    call_log_id INTEGER REFERENCES call_log(id),
+    failure_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'medium',
+    business_name TEXT,
+    place_id TEXT,
+    description TEXT NOT NULL,
+    context TEXT,              -- JSON blob
+    resolved BOOLEAN NOT NULL DEFAULT FALSE,
+    resolution_notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_waitlist_email ON waitlist(email);
 CREATE INDEX IF NOT EXISTS idx_message_log_user ON message_log(user_id);
@@ -127,3 +161,10 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(due_at, st
 CREATE INDEX IF NOT EXISTS idx_unregistered_phone ON unregistered_attempts(phone);
 CREATE INDEX IF NOT EXISTS idx_unregistered_created ON unregistered_attempts(created_at);
 CREATE INDEX IF NOT EXISTS idx_phone_start_phone ON phone_start_attempts(phone);
+CREATE INDEX IF NOT EXISTS idx_business_profiles_name ON business_profiles(business_name);
+CREATE INDEX IF NOT EXISTS idx_failure_log_type ON failure_log(failure_type);
+CREATE INDEX IF NOT EXISTS idx_failure_log_severity ON failure_log(severity);
+CREATE INDEX IF NOT EXISTS idx_failure_log_created ON failure_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_failure_log_resolved ON failure_log(resolved);
+CREATE INDEX IF NOT EXISTS idx_call_log_place_id ON call_log(place_id);
+CREATE INDEX IF NOT EXISTS idx_call_log_business ON call_log(business_name);

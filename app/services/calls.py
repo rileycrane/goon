@@ -332,27 +332,33 @@ async def initiate_outbound_call(
 
 async def handle_call_failure(record: dict, outcome: dict) -> None:
     """Route call failures to appropriate retry/response strategy."""
+    from app.services.scheduler import compute_retry_delay
+
     user_id = record["user_id"]
     biz = record["business_name"]
+    retry_count = record.get("retry_count", 0)
 
     try:
-        if outcome["reason"] == "busy":
-            await send_sms(user_id, f"{biz}'s line is busy. Trying again in 5 min.")
-            await schedule_retry(record, delay_minutes=5)
+        reason = outcome["reason"]
+        delay = compute_retry_delay(retry_count, reason)
 
-        elif outcome["reason"] == "no-answer":
-            await send_sms(user_id, f"No answer at {biz}. I'll try again in 10 min.")
-            await schedule_retry(record, delay_minutes=10)
+        if reason == "busy":
+            await send_sms(user_id, f"{biz}'s line is busy. Trying again in {delay} min.")
+            await schedule_retry(record, delay_minutes=delay)
 
-        elif outcome["reason"] == "voicemail":
+        elif reason in ("no-answer", "no_answer"):
+            await send_sms(user_id, f"No answer at {biz}. I'll try again in {delay} min.")
+            await schedule_retry(record, delay_minutes=delay)
+
+        elif reason == "voicemail":
             await send_sms(
                 user_id,
-                f"Got voicemail at {biz}. I'll try again in 30 min, "
+                f"Got voicemail at {biz}. I'll try again in {delay} min, "
                 f"or I can look online instead. Reply 'web' to skip the call.",
             )
-            await schedule_retry(record, delay_minutes=30)
+            await schedule_retry(record, delay_minutes=delay)
 
-        elif outcome["reason"] == "wrong_number":
+        elif reason == "wrong_number":
             await send_sms(
                 user_id,
                 f"That number doesn't seem right for {biz}. "
@@ -365,10 +371,10 @@ async def handle_call_failure(record: dict, outcome: dict) -> None:
                     {"success": False, "reason": "wrong_number"},
                 )
 
-        elif outcome["reason"] == "hung_up":
-            if record.get("retry_count", 0) < 1:
-                await send_sms(user_id, f"{biz} hung up. I'll try once more in a few minutes.")
-                await schedule_retry(record, delay_minutes=15)
+        elif reason == "hung_up":
+            if retry_count < 1:
+                await send_sms(user_id, f"{biz} hung up. I'll try once more in {delay} min.")
+                await schedule_retry(record, delay_minutes=delay)
             else:
                 await send_sms(
                     user_id,
@@ -376,7 +382,7 @@ async def handle_call_failure(record: dict, outcome: dict) -> None:
                     f"You might need to call them directly at {record['business_phone']}.",
                 )
 
-        elif outcome["reason"] == "timeout":
+        elif reason == "timeout":
             await send_sms(
                 user_id,
                 f"Was on hold too long at {biz}. Want me to try again later?",
@@ -399,6 +405,21 @@ async def handle_call_failure(record: dict, outcome: dict) -> None:
         )
     except Exception:
         logger.exception("Failed to update call_log status for %s", record.get("vapi_call_id"))
+
+    # Log failure for tracking
+    try:
+        from app.services.failures import log_failure
+        await log_failure(
+            failure_type=outcome["reason"],
+            description=f"Call to {biz} failed: {outcome['reason']}",
+            user_id=user_id,
+            call_log_id=record.get("id"),
+            business_name=biz,
+            place_id=record.get("place_id"),
+            context={"retry_count": retry_count, "outcome": outcome},
+        )
+    except Exception:
+        logger.exception("Failed to log failure for %s", record.get("vapi_call_id"))
 
 
 async def schedule_retry(record: dict, delay_minutes: int) -> None:

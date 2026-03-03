@@ -64,6 +64,15 @@ async def store_fact(
     expires_at = now + expiry
     confidence = CONFIDENCE_BY_SOURCE.get(source, DEFAULT_CONFIDENCE)
 
+    # Ensure business profile exists and increment query count
+    if place_id:
+        try:
+            from app.services.intelligence import ensure_business_profile, increment_business_queries
+            await ensure_business_profile(place_id, business_name)
+            await increment_business_queries(place_id)
+        except Exception:
+            pass  # non-critical
+
     await db.execute(
         """
         INSERT INTO business_facts

@@ -13,6 +13,11 @@ from app.services.auth import get_user, is_user_active
 from app.services.cache import store_fact, update_phone_score
 from app.services.calls import handle_call_failure
 from app.services.memory import append_conversation, load_memory
+from app.services.intelligence import (
+    ensure_business_profile,
+    extract_call_intelligence,
+    increment_business_calls,
+)
 from app.services.sms import send_sms
 
 logger = logging.getLogger(__name__)
@@ -53,10 +58,21 @@ async def vapi_event(request: Request) -> dict:
             # Update call_log on terminal status events that aren't end-of-call
             if status in ("ended", "failed"):
                 await _ensure_call_status_updated(call_id, status)
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Unhandled error processing Vapi event type=%s call_id=%s", msg_type, call_id,
         )
+        # Log failure for tracking
+        try:
+            from app.services.failures import log_failure
+            await log_failure(
+                failure_type="webhook_error",
+                description=f"Vapi webhook error processing {msg_type}: {exc}",
+                severity="high",
+                context={"call_id": call_id, "event_type": msg_type},
+            )
+        except Exception:
+            pass
         # On any error, try to mark the call as failed so it doesn't stay in_progress
         if call_id != "unknown":
             await _mark_call_failed_on_error(call_id, msg_type)
@@ -240,6 +256,25 @@ async def _handle_end_of_call(event: dict) -> None:
             logger.exception("Failed to update call_log for successful call %s", call_id)
         logger.info("Call success: %s -> %s", call_id, record["business_name"])
 
+        # Business intelligence: update profile + extract intelligence
+        if record.get("place_id"):
+            try:
+                await ensure_business_profile(
+                    record["place_id"], record["business_name"],
+                )
+                await increment_business_calls(
+                    record["place_id"], success=True,
+                    duration_seconds=duration,
+                )
+                import asyncio
+                asyncio.create_task(
+                    extract_call_intelligence(
+                        transcript, record["business_name"], record["place_id"],
+                    )
+                )
+            except Exception:
+                logger.exception("Business intelligence update failed for call %s", call_id)
+
     else:
         await handle_call_failure(record, outcome)
         # Store transcript even on failure
@@ -250,6 +285,19 @@ async def _handle_end_of_call(event: dict) -> None:
             )
         except Exception:
             logger.exception("Failed to update call_log for failed call %s", call_id)
+        # Business intelligence: update profile on failure too
+        if record.get("place_id"):
+            try:
+                await ensure_business_profile(
+                    record["place_id"], record["business_name"],
+                )
+                await increment_business_calls(
+                    record["place_id"], success=False,
+                    duration_seconds=duration,
+                )
+            except Exception:
+                logger.exception("Business intelligence update failed for call %s", call_id)
+
         logger.info(
             "Call failed: %s -> %s reason=%s",
             call_id, record["business_name"], outcome["reason"],

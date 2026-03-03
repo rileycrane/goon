@@ -15,7 +15,6 @@ from app.services.auth import (
     get_user,
     get_user_tier,
     increment_free_message_count,
-    is_free_tier_exhausted,
 )
 from app.services.sms import send_sms
 
@@ -75,49 +74,6 @@ async def _send_payment_link(phone: str) -> None:
     from app.services.billing import send_payment_link
     await send_payment_link(phone)
 
-
-async def _send_paywall_message(phone: str, user: dict) -> None:
-    """Compose and send a paywall message when free messages are exhausted."""
-    import anthropic
-    from app.services.memory import load_memory
-
-    try:
-        memory = await load_memory(phone)
-        profile_excerpt = memory.profile[:300]
-    except Exception:
-        profile_excerpt = ""
-
-    try:
-        client = anthropic.AsyncAnthropic()
-        response = await client.messages.create(
-            model=settings.anthropic_model,
-            max_tokens=300,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "A free user has hit their 10-message limit on Hold Plz. "
-                        "Compose a short, warm SMS (under 300 chars, no emoji) that:\n"
-                        "1. Acknowledges they've used their free messages\n"
-                        "2. References something specific they asked about if possible\n"
-                        "3. Mentions the paid plan lets them make calls to businesses\n"
-                        "4. Says to text 'pay' to get a payment link\n"
-                        "Be warm, not salesy. Sound like a friend, not a company.\n\n"
-                        f"User context: {profile_excerpt}"
-                    ),
-                }
-            ],
-        )
-        msg = response.content[0].text.strip()
-    except Exception:
-        logger.exception("Failed to compose paywall message for %s", phone)
-        msg = (
-            "You've used your 10 free messages. To keep going and unlock "
-            "business calls, text 'pay' for a link to the paid plan ($19.99/mo)."
-        )
-
-    await send_sms(phone, msg)
-    await _log_message(phone, "out", msg)
 
 
 @router.post("/webhook")
@@ -191,14 +147,11 @@ async def sms_webhook(request: Request) -> Response:
         # Paying user — full access
         asyncio.create_task(_process_and_respond(user["id"], sender, body))
     elif tier == "free":
-        # Free tier — check message limit
-        if is_free_tier_exhausted(user, settings.free_message_limit):
-            asyncio.create_task(_send_paywall_message(sender, user))
-        else:
-            await increment_free_message_count(sender)
-            asyncio.create_task(
-                _process_and_respond(user["id"], sender, body, is_free_tier=True)
-            )
+        # Free tier — always dispatch (paywall fires at tool execution, not message count)
+        await increment_free_message_count(sender)
+        asyncio.create_task(
+            _process_and_respond(user["id"], sender, body, is_free_tier=True)
+        )
     else:
         # Inactive (canceled, past_due, etc.)
         asyncio.create_task(

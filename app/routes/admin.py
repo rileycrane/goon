@@ -1,18 +1,89 @@
-"""Admin dashboard — user management, lead review, system health."""
+"""Admin dashboard — user management, business intelligence, system health."""
+from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+import json
+import logging
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from app.config import settings
 from app.db.database import db
 from app.services.auth import get_signups_enabled, set_signups_enabled
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
+USER_DATA_DIR = Path(settings.user_data_dir)
 
-def _check_admin(password: str | None) -> None:
+
+def _check_admin(password: Optional[str]) -> None:
     if not settings.admin_password or password != settings.admin_password:
         raise HTTPException(status_code=401, detail="unauthorized")
+
+
+# ---- Overview ----
+
+@router.get("/stats")
+async def admin_stats(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """System-wide metrics for admin overview."""
+    _check_admin(x_admin_password)
+
+    users_total = await db.fetch_one("SELECT COUNT(*) as c FROM users")
+    users_free = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM users WHERE subscription_status = 'free'"
+    )
+    users_active = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM users WHERE subscription_status = 'active'"
+    )
+    calls_total = await db.fetch_one("SELECT COUNT(*) as c FROM call_log")
+    calls_success = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM call_log WHERE status = 'success'"
+    )
+    calls_failed = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM call_log WHERE status LIKE 'failed%'"
+    )
+    msgs_24h = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM message_log WHERE created_at > datetime('now', '-1 day')"
+    )
+    msgs_7d = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM message_log WHERE created_at > datetime('now', '-7 days')"
+    )
+    failures_active = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM failure_log WHERE resolved = FALSE"
+    )
+
+    recent_messages = await db.fetch_all(
+        "SELECT * FROM message_log ORDER BY created_at DESC LIMIT 10"
+    )
+    recent_calls = await db.fetch_all(
+        "SELECT * FROM call_log ORDER BY created_at DESC LIMIT 10"
+    )
+
+    return {
+        "users": {
+            "total": users_total["c"] if users_total else 0,
+            "free": users_free["c"] if users_free else 0,
+            "active": users_active["c"] if users_active else 0,
+        },
+        "calls": {
+            "total": calls_total["c"] if calls_total else 0,
+            "success": calls_success["c"] if calls_success else 0,
+            "failed": calls_failed["c"] if calls_failed else 0,
+        },
+        "messages": {
+            "last_24h": msgs_24h["c"] if msgs_24h else 0,
+            "last_7d": msgs_7d["c"] if msgs_7d else 0,
+        },
+        "failures_active": failures_active["c"] if failures_active else 0,
+        "recent_messages": recent_messages,
+        "recent_calls": recent_calls,
+    }
 
 
 @router.get("/")
@@ -21,16 +92,18 @@ async def admin_dashboard() -> dict:
     return {"status": "ok"}
 
 
+# ---- User Management ----
+
 class SeedUserRequest(BaseModel):
     phone: str
-    name: str | None = None
+    name: Optional[str] = None
     allowlisted: bool = True
 
 
 @router.post("/seed-user")
 async def seed_user(
     body: SeedUserRequest,
-    x_admin_password: str | None = Header(None),
+    x_admin_password: Optional[str] = Header(None),
 ) -> dict:
     """Seed or update a user in the database."""
     _check_admin(x_admin_password)
@@ -46,58 +119,9 @@ async def seed_user(
     return {"status": "ok", "phone": body.phone, "name": body.name}
 
 
-@router.get("/calls")
-async def list_calls(
-    x_admin_password: str | None = Header(None),
-) -> dict:
-    """List recent calls for debugging."""
-    _check_admin(x_admin_password)
-    rows = await db.fetch_all(
-        "SELECT * FROM call_log ORDER BY created_at DESC LIMIT 10"
-    )
-    return {"calls": rows}
-
-
-@router.get("/messages")
-async def list_messages(
-    x_admin_password: str | None = Header(None),
-) -> dict:
-    """List recent messages for debugging."""
-    _check_admin(x_admin_password)
-    rows = await db.fetch_all(
-        "SELECT * FROM message_log ORDER BY created_at DESC LIMIT 20"
-    )
-    return {"messages": rows}
-
-
-class SignupsToggle(BaseModel):
-    enabled: bool
-
-
-@router.post("/settings/signups")
-async def toggle_signups(
-    body: SignupsToggle,
-    x_admin_password: str | None = Header(None),
-) -> dict:
-    """Toggle signups_enabled setting (runtime, stored in DB)."""
-    _check_admin(x_admin_password)
-    await set_signups_enabled(body.enabled)
-    return {"status": "ok", "signups_enabled": body.enabled}
-
-
-@router.get("/settings/signups")
-async def get_signups_status(
-    x_admin_password: str | None = Header(None),
-) -> dict:
-    """Get current signups_enabled status."""
-    _check_admin(x_admin_password)
-    enabled = await get_signups_enabled()
-    return {"signups_enabled": enabled}
-
-
 @router.get("/users")
 async def list_users(
-    x_admin_password: str | None = Header(None),
+    x_admin_password: Optional[str] = Header(None),
 ) -> dict:
     """List all users with tier, message count, call count."""
     _check_admin(x_admin_password)
@@ -106,7 +130,228 @@ async def list_users(
                   free_messages_used, calls_used_this_period, created_at
            FROM users ORDER BY created_at DESC"""
     )
+    # Add message and call counts per user
+    for row in rows:
+        msg_count = await db.fetch_one(
+            "SELECT COUNT(*) as c FROM message_log WHERE user_id = ?",
+            [row["id"]],
+        )
+        call_count = await db.fetch_one(
+            "SELECT COUNT(*) as c FROM call_log WHERE user_id = ?",
+            [row["id"]],
+        )
+        row["total_messages"] = msg_count["c"] if msg_count else 0
+        row["total_calls"] = call_count["c"] if call_count else 0
     return {"users": rows}
+
+
+@router.get("/users/{phone}")
+async def get_user_detail(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Full user record with aggregated stats."""
+    _check_admin(x_admin_password)
+    user = await db.fetch_one("SELECT * FROM users WHERE phone = ?", [phone])
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    msg_count = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM message_log WHERE user_id = ?", [phone]
+    )
+    call_count = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM call_log WHERE user_id = ?", [phone]
+    )
+    call_success = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM call_log WHERE user_id = ? AND status = 'success'",
+        [phone],
+    )
+
+    return {
+        **user,
+        "total_messages": msg_count["c"] if msg_count else 0,
+        "total_calls": call_count["c"] if call_count else 0,
+        "successful_calls": call_success["c"] if call_success else 0,
+    }
+
+
+@router.get("/users/{phone}/profile")
+async def get_user_profile(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return USER.md content for a user."""
+    _check_admin(x_admin_password)
+    user_dir = USER_DATA_DIR / phone
+    user_md = user_dir / "USER.md"
+    legacy = user_dir / "profile.md"
+
+    content = ""
+    try:
+        if user_md.exists():
+            content = user_md.read_text()
+        elif legacy.exists():
+            content = legacy.read_text()
+    except Exception:
+        logger.exception("Failed to read profile for %s", phone)
+
+    return {"phone": phone, "profile": content}
+
+
+@router.get("/users/{phone}/memory")
+async def get_user_memory(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return MEMORY.md content for a user."""
+    _check_admin(x_admin_password)
+    user_dir = USER_DATA_DIR / phone
+    memory_md = user_dir / "MEMORY.md"
+
+    content = ""
+    try:
+        if memory_md.exists():
+            content = memory_md.read_text()
+    except Exception:
+        logger.exception("Failed to read memory for %s", phone)
+
+    return {"phone": phone, "memory": content}
+
+
+@router.get("/users/{phone}/conversations")
+async def get_user_conversations(
+    phone: str,
+    limit: int = Query(100, ge=1, le=1000),
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return conversation history (from JSONL + message_log)."""
+    _check_admin(x_admin_password)
+
+    # Load from JSONL file
+    user_dir = USER_DATA_DIR / phone
+    convos_path = user_dir / "conversations.jsonl"
+    messages: list[dict] = []
+    try:
+        if convos_path.exists():
+            for line in convos_path.read_text().strip().split("\n"):
+                if line:
+                    try:
+                        messages.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        logger.exception("Failed to read conversations for %s", phone)
+
+    return {"phone": phone, "conversations": messages[-limit:]}
+
+
+@router.get("/users/{phone}/conversations/businesses")
+async def get_user_conversations_by_business(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Conversations grouped by business name."""
+    _check_admin(x_admin_password)
+
+    # Get all business names from call_log for this user
+    call_records = await db.fetch_all(
+        """SELECT id, business_name, business_phone, place_id, task, task_type,
+                  status, result, created_at, duration_seconds
+           FROM call_log WHERE user_id = ? ORDER BY created_at""",
+        [phone],
+    )
+    business_names = {r["business_name"].lower(): r["business_name"] for r in call_records if r.get("business_name")}
+
+    # Load conversations
+    user_dir = USER_DATA_DIR / phone
+    convos_path = user_dir / "conversations.jsonl"
+    messages: list[dict] = []
+    try:
+        if convos_path.exists():
+            for line in convos_path.read_text().strip().split("\n"):
+                if line:
+                    try:
+                        messages.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        pass
+
+    # Group messages by business
+    grouped: dict[str, dict] = {}
+    general: list[dict] = []
+
+    for msg in messages:
+        text = msg.get("text", "").lower()
+        matched_business = None
+        for biz_lower, biz_name in business_names.items():
+            if biz_lower in text:
+                matched_business = biz_name
+                break
+
+        # Also check metadata for business references
+        if not matched_business and msg.get("business"):
+            matched_business = msg["business"]
+
+        if matched_business:
+            if matched_business not in grouped:
+                grouped[matched_business] = {
+                    "business_name": matched_business,
+                    "messages": [],
+                    "calls": [],
+                }
+            grouped[matched_business]["messages"].append(msg)
+        else:
+            general.append(msg)
+
+    # Attach call records to their business groups
+    for record in call_records:
+        biz = record.get("business_name", "")
+        if biz in grouped:
+            grouped[biz]["calls"].append(record)
+        elif biz:
+            grouped[biz] = {
+                "business_name": biz,
+                "messages": [],
+                "calls": [record],
+            }
+
+    return {
+        "phone": phone,
+        "businesses": list(grouped.values()),
+        "general": general,
+    }
+
+
+@router.get("/users/{phone}/calls")
+async def get_user_calls(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """All call_log entries for a user."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        "SELECT * FROM call_log WHERE user_id = ? ORDER BY created_at DESC",
+        [phone],
+    )
+    return {"phone": phone, "calls": rows}
+
+
+@router.get("/users/{phone}/calls/{call_id}/transcript")
+async def get_call_transcript(
+    phone: str,
+    call_id: int,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Single call transcript on demand."""
+    _check_admin(x_admin_password)
+    record = await db.fetch_one(
+        "SELECT id, vapi_call_id, business_name, transcript, result, status, duration_seconds, created_at FROM call_log WHERE id = ? AND user_id = ?",
+        [call_id, phone],
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="call not found")
+    return record
 
 
 class AllowlistToggle(BaseModel):
@@ -117,7 +362,7 @@ class AllowlistToggle(BaseModel):
 async def toggle_allowlist(
     phone: str,
     body: AllowlistToggle,
-    x_admin_password: str | None = Header(None),
+    x_admin_password: Optional[str] = Header(None),
 ) -> dict:
     """Toggle allowlist status for a user."""
     _check_admin(x_admin_password)
@@ -126,3 +371,182 @@ async def toggle_allowlist(
         [body.allowlisted, phone],
     )
     return {"status": "ok", "phone": phone, "allowlisted": body.allowlisted}
+
+
+# ---- Business Intelligence ----
+
+@router.get("/businesses")
+async def list_businesses(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """List all business profiles with stats."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        "SELECT * FROM business_profiles ORDER BY last_updated DESC"
+    )
+    return {"businesses": rows}
+
+
+@router.get("/businesses/{place_id}")
+async def get_business_detail(
+    place_id: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Full business profile with facts and phone scores."""
+    _check_admin(x_admin_password)
+
+    profile = await db.fetch_one(
+        "SELECT * FROM business_profiles WHERE place_id = ?", [place_id]
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="business not found")
+
+    facts = await db.fetch_all(
+        "SELECT * FROM business_facts WHERE place_id = ? ORDER BY verified_at DESC",
+        [place_id],
+    )
+    scores = await db.fetch_all(
+        "SELECT * FROM phone_scores WHERE place_id = ?", [place_id]
+    )
+    ivr_maps = await db.fetch_all(
+        "SELECT * FROM ivr_maps WHERE place_id = ?", [place_id]
+    )
+
+    return {
+        "profile": profile,
+        "facts": facts,
+        "phone_scores": scores,
+        "ivr_maps": ivr_maps,
+    }
+
+
+@router.get("/businesses/{place_id}/calls")
+async def get_business_calls(
+    place_id: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """All calls to a specific business."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        "SELECT * FROM call_log WHERE place_id = ? ORDER BY created_at DESC",
+        [place_id],
+    )
+    return {"place_id": place_id, "calls": rows}
+
+
+# ---- Failure Tracking ----
+
+@router.get("/failures")
+async def list_failures(
+    failure_type: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    resolved: Optional[bool] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Failure log with optional filters."""
+    _check_admin(x_admin_password)
+
+    conditions = []
+    params: list = []
+    if failure_type:
+        conditions.append("failure_type = ?")
+        params.append(failure_type)
+    if severity:
+        conditions.append("severity = ?")
+        params.append(severity)
+    if resolved is not None:
+        conditions.append("resolved = ?")
+        params.append(resolved)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = await db.fetch_all(
+        f"SELECT * FROM failure_log {where} ORDER BY created_at DESC LIMIT ?",
+        params + [limit],
+    )
+    return {"failures": rows}
+
+
+@router.get("/failures/summary")
+async def failures_summary(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Aggregated failure stats."""
+    _check_admin(x_admin_password)
+
+    total = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM failure_log WHERE created_at > datetime('now', '-7 days')"
+    )
+    by_type = await db.fetch_all(
+        """SELECT failure_type, COUNT(*) as count
+           FROM failure_log WHERE created_at > datetime('now', '-7 days')
+           GROUP BY failure_type ORDER BY count DESC"""
+    )
+    by_severity = await db.fetch_all(
+        """SELECT severity, COUNT(*) as count
+           FROM failure_log WHERE created_at > datetime('now', '-7 days')
+           GROUP BY severity ORDER BY count DESC"""
+    )
+    top_businesses = await db.fetch_all(
+        """SELECT business_name, COUNT(*) as count
+           FROM failure_log WHERE created_at > datetime('now', '-7 days')
+           AND business_name IS NOT NULL
+           GROUP BY business_name ORDER BY count DESC LIMIT 5"""
+    )
+    unresolved = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM failure_log WHERE resolved = FALSE"
+    )
+
+    return {
+        "total_this_week": total["c"] if total else 0,
+        "by_type": by_type,
+        "by_severity": by_severity,
+        "top_failing_businesses": top_businesses,
+        "unresolved": unresolved["c"] if unresolved else 0,
+    }
+
+
+class ResolveFailure(BaseModel):
+    notes: str = ""
+
+
+@router.post("/failures/{failure_id}/resolve")
+async def resolve_failure(
+    failure_id: int,
+    body: ResolveFailure,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Mark a failure as resolved with optional notes."""
+    _check_admin(x_admin_password)
+    await db.execute(
+        "UPDATE failure_log SET resolved = TRUE, resolution_notes = ? WHERE id = ?",
+        [body.notes, failure_id],
+    )
+    return {"status": "ok", "failure_id": failure_id}
+
+
+# ---- Settings ----
+
+class SignupsToggle(BaseModel):
+    enabled: bool
+
+
+@router.post("/settings/signups")
+async def toggle_signups(
+    body: SignupsToggle,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Toggle signups_enabled setting (runtime, stored in DB)."""
+    _check_admin(x_admin_password)
+    await set_signups_enabled(body.enabled)
+    return {"status": "ok", "signups_enabled": body.enabled}
+
+
+@router.get("/settings/signups")
+async def get_signups_status(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Get current signups_enabled status."""
+    _check_admin(x_admin_password)
+    enabled = await get_signups_enabled()
+    return {"signups_enabled": enabled}

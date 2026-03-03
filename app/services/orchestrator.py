@@ -219,7 +219,8 @@ class OrchestratorResult:
 # ---- System prompt builder ----
 
 def build_system_prompt(
-    user: dict, memory, is_free_tier: bool = False
+    user: dict, memory, is_free_tier: bool = False,
+    business_context: str = "",
 ) -> str:
     """Build the system prompt with user context and resolution ladder."""
     name = user.get("name", "there")
@@ -229,17 +230,13 @@ def build_system_prompt(
     # Free tier context
     free_tier_section = ""
     if is_free_tier:
-        used = user.get("free_messages_used", 0)
-        limit = settings.free_message_limit
-        remaining = max(0, limit - used)
-        free_tier_section = f"""
+        free_tier_section = """
 ## Access Level: Free Tier
-This user has {remaining} free messages remaining (of {limit}).
-They can search for business info but CANNOT make calls.
-Do NOT mention calling businesses as an option.
-If the user asks you to call somewhere, explain that calling requires the paid plan
-and they can text "pay" to upgrade ($19.99/mo, 20 calls).
-Keep responses helpful — show the value of what you can do for free (search, lookup, info).
+This user is on the free plan. You can suggest calling businesses when it makes sense.
+If the user wants you to call, go ahead and try — the system will handle the upgrade prompt.
+If a call tool returns a payment-required message, let the user know warmly that calling
+is on the paid plan ($19.99/mo, 20 calls) and they can text "pay" or use the link sent.
+Don't hard-sell. Mention it once, then move on.
 """
     else:
         calls_used = user.get("calls_used_this_period", 0)
@@ -279,7 +276,8 @@ Today: {datetime.now().isoformat()}
 - If the user's location matters and you don't know it, ask
 - After a call completes, text the result concisely
 - If a call is in progress, say so briefly: "Calling [business] now. Back in a few."
-"""
+
+{business_context}"""
 
 
 # ---- Test business helper ----
@@ -312,11 +310,15 @@ async def _execute_tool(
     is_free_tier: bool = False,
 ) -> str:
     """Execute a single tool call and return the result as a string."""
-    # Defense-in-depth: block gated tools for free tier even if LLM hallucinates them
+    # Call-intent paywall: free tier can see all tools but execution is gated
     if is_free_tier and tool_name in GATED_TOOLS:
+        from app.services.billing import send_payment_link
+        phone = user.get("phone", user.get("id", ""))
+        asyncio.create_task(send_payment_link(phone))
         return (
-            "This feature requires a paid subscription. "
-            "The user can text 'pay' to upgrade."
+            "This requires calling the business. A payment link was just sent. "
+            "Let the user know you'd love to make this call, and they can text "
+            "'pay' or use the link to upgrade ($19.99/mo, 20 calls)."
         )
 
     try:
@@ -357,6 +359,26 @@ async def _execute_tool(
                     )
                 return f"Pre-call check passed.{issues_text} OK to call."
             else:
+                # Check if business is closed — offer to queue the call
+                closed_issues = [i for i in result["issues"] if i["type"] == "closed"]
+                if closed_issues and result.get("next_opening"):
+                    from app.services.scheduler import queue_call_for_opening
+                    opening = datetime.fromisoformat(result["next_opening"])
+                    user_id = user.get("id", user.get("phone", ""))
+                    await queue_call_for_opening(
+                        user_id=user_id,
+                        business_name=tool_input["business_name"],
+                        business_phone=tool_input["business_phone"],
+                        task="(pending — user will specify task before call)",
+                        task_type="information",
+                        place_id=tool_input.get("place_id"),
+                        opening_time=opening,
+                    )
+                    opening_str = opening.strftime("%I:%M %p")
+                    return (
+                        f"Business is closed right now. I've queued the call for "
+                        f"{opening_str} when they open. I'll text the user when it's done."
+                    )
                 issues_text = "; ".join(i["message"] for i in result["issues"])
                 return f"Pre-call check FAILED: {issues_text}"
 
@@ -432,6 +454,42 @@ async def _execute_tool(
         return f"Tool error: {exc}"
 
 
+# ---- Business context builder ----
+
+async def _build_business_context(user_id: str, message: str, memory) -> str:
+    """Look up business profiles relevant to the current message."""
+    try:
+        # Get businesses the user has interacted with
+        call_records = await db.fetch_all(
+            "SELECT DISTINCT place_id, business_name FROM call_log WHERE user_id = ? AND place_id IS NOT NULL",
+            [user_id],
+        )
+        if not call_records:
+            return ""
+
+        from app.services.intelligence import build_business_context
+
+        msg_lower = message.lower()
+        context_parts = []
+        for record in call_records:
+            if record["business_name"] and record["business_name"].lower() in msg_lower:
+                profile = await db.fetch_one(
+                    "SELECT * FROM business_profiles WHERE place_id = ?",
+                    [record["place_id"]],
+                )
+                if profile:
+                    ctx = build_business_context(profile)
+                    if ctx:
+                        context_parts.append(
+                            f"## Known: {record['business_name']}\n{ctx}"
+                        )
+
+        return "\n".join(context_parts)
+    except Exception:
+        logger.exception("Failed to build business context")
+        return ""
+
+
 # ---- Public API ----
 
 async def handle_message(
@@ -450,11 +508,16 @@ async def handle_message(
 
     memory = await load_memory(user_id)
 
-    # Build the conversation for Claude
-    system = build_system_prompt(user, memory, is_free_tier=is_free_tier)
+    # Build business context from world model
+    biz_context = await _build_business_context(user_id, message, memory)
 
-    # Filter tools for free tier — LLM can't even see gated tools
-    active_tools = [t for t in TOOLS if t["name"] not in GATED_TOOLS] if is_free_tier else TOOLS
+    # Build the conversation for Claude
+    system = build_system_prompt(
+        user, memory, is_free_tier=is_free_tier, business_context=biz_context,
+    )
+
+    # Free tier sees all tools — execution is gated in _execute_tool
+    active_tools = TOOLS
 
     messages: list[dict] = [{"role": "user", "content": message}]
 
@@ -524,6 +587,16 @@ async def handle_message(
     else:
         # Exhausted tool rounds without a final answer
         result_text = "Sorry, I had trouble with that. Try asking again?"
+        try:
+            from app.services.failures import log_failure
+            asyncio.create_task(log_failure(
+                failure_type="composition_failure",
+                description=f"Tool loop exhausted ({MAX_TOOL_ROUNDS} rounds) for message: {message[:100]}",
+                user_id=user_id,
+                context={"message": message[:500]},
+            ))
+        except Exception:
+            pass
 
     # Persist memory (conversation + any LLM-generated updates)
     asyncio.create_task(
