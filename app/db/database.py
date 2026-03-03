@@ -101,5 +101,14 @@ class Database:
         await self._conn.commit()
 
 
-# Module-level singleton
-db = Database()
+# Module-level singleton — use DATABASE_URL env var if set
+def _db_path_from_env() -> str:
+    import os
+    url = os.getenv("DATABASE_URL", "")
+    if url.startswith("sqlite://"):
+        # sqlite:///data/goon.db -> /data/goon.db
+        return url.removeprefix("sqlite://")
+    return str(DEFAULT_DB_PATH)
+
+
+db = Database(_db_path_from_env())
