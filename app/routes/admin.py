@@ -43,3 +43,27 @@ async def seed_user(
         (body.phone, body.phone, body.name, body.allowlisted),
     )
     return {"status": "ok", "phone": body.phone, "name": body.name}
+
+
+@router.get("/calls")
+async def list_calls(
+    x_admin_password: str | None = Header(None),
+) -> dict:
+    """List recent calls for debugging."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        "SELECT * FROM call_log ORDER BY created_at DESC LIMIT 10"
+    )
+    return {"calls": rows}
+
+
+@router.get("/messages")
+async def list_messages(
+    x_admin_password: str | None = Header(None),
+) -> dict:
+    """List recent messages for debugging."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        "SELECT * FROM message_log ORDER BY created_at DESC LIMIT 20"
+    )
+    return {"messages": rows}
