@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Goon - Your AI that does the thing so you don't have to",
+  title: "Hold Plz - we make the calls you don't want to",
   description:
-    "Text or call one number. Goon answers questions, calls businesses, makes reservations, and remembers your preferences. No app needed.",
+    "Text us what you need. We call the place. You get a text back when it's done. Restaurants, salons, dentists, vets, whatever.",
 };
 
 export default function RootLayout({
@@ -14,7 +14,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-white text-gray-900 antialiased">{children}</body>
+      <head>
+        <link
+          href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

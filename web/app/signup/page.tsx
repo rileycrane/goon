@@ -28,9 +28,9 @@ export default function Signup() {
         const data = await res.json();
         const detail = data.detail;
         if (Array.isArray(detail)) {
-          setError(detail[0]?.msg || "Invalid input");
+          setError(detail[0]?.msg || "invalid input");
         } else {
-          setError(detail || "Something went wrong");
+          setError(detail || "something went wrong");
         }
         setLoading(false);
         return;
@@ -39,26 +39,30 @@ export default function Signup() {
       const data = await res.json();
       window.location.href = data.checkout_url;
     } catch {
-      setError("Could not connect to server. Try again.");
+      setError("could not connect to server. try again.");
       setLoading(false);
     }
   }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-6 py-16">
-      <Link href="/" className="mb-8 text-sm text-gray-500 hover:text-gray-700">
-        &larr; Back
+      <Link
+        href="/"
+        className="mb-8 text-sm hover:opacity-70 transition-opacity"
+        style={{ color: "var(--text-muted)" }}
+      >
+        &larr; back
       </Link>
       <div className="w-full max-w-md">
-        <h1 className="text-3xl font-bold text-center">Sign up for Goon</h1>
-        <p className="mt-2 text-center text-gray-600">
-          $19.99/month. Cancel anytime.
+        <h1 className="text-3xl font-bold text-center">sign up for hold plz</h1>
+        <p className="mt-2 text-center" style={{ color: "var(--text-muted)" }}>
+          $19.99/month. cancel anytime.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-5">
           <div>
             <label htmlFor="name" className="block text-sm font-medium">
-              Name
+              name
             </label>
             <input
               id="name"
@@ -66,14 +70,20 @@ export default function Signup() {
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-4 py-2.5 focus:border-black focus:ring-1 focus:ring-black focus:outline-none"
+              className="mt-1 block w-full rounded-lg border-2 px-4 py-2.5 focus:outline-none transition-colors"
+              style={{
+                borderColor: "#c8d0c8",
+                background: "var(--white)",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+              onBlur={(e) => (e.target.style.borderColor = "#c8d0c8")}
               placeholder="Riley"
             />
           </div>
 
           <div>
             <label htmlFor="phone" className="block text-sm font-medium">
-              Phone number
+              phone number
             </label>
             <input
               id="phone"
@@ -81,17 +91,23 @@ export default function Signup() {
               required
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-4 py-2.5 focus:border-black focus:ring-1 focus:ring-black focus:outline-none"
+              className="mt-1 block w-full rounded-lg border-2 px-4 py-2.5 focus:outline-none transition-colors"
+              style={{
+                borderColor: "#c8d0c8",
+                background: "var(--white)",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+              onBlur={(e) => (e.target.style.borderColor = "#c8d0c8")}
               placeholder="(555) 123-4567"
             />
-            <p className="mt-1 text-xs text-gray-500">
-              This is the number you&apos;ll text Goon from.
+            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              this is the number you'll text hold plz from.
             </p>
           </div>
 
           <div>
             <label htmlFor="email" className="block text-sm font-medium">
-              Email
+              email
             </label>
             <input
               id="email"
@@ -99,21 +115,32 @@ export default function Signup() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-4 py-2.5 focus:border-black focus:ring-1 focus:ring-black focus:outline-none"
+              className="mt-1 block w-full rounded-lg border-2 px-4 py-2.5 focus:outline-none transition-colors"
+              style={{
+                borderColor: "#c8d0c8",
+                background: "var(--white)",
+              }}
+              onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
+              onBlur={(e) => (e.target.style.borderColor = "#c8d0c8")}
               placeholder="riley@example.com"
             />
           </div>
 
-          {error && (
-            <p className="text-sm text-red-600">{error}</p>
-          )}
+          {error && <p className="text-sm text-red-600">{error}</p>}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-black px-4 py-3 font-medium text-white hover:bg-gray-800 disabled:bg-gray-400 transition-colors"
+            className="w-full rounded-lg px-4 py-3 font-medium text-white transition-colors disabled:opacity-50"
+            style={{ background: "var(--accent)" }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = "var(--accent-hover)")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = "var(--accent)")
+            }
           >
-            {loading ? "Redirecting to payment..." : "Continue to payment"}
+            {loading ? "redirecting to payment..." : "continue to payment"}
           </button>
         </form>
       </div>

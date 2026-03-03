@@ -69,7 +69,12 @@ app = FastAPI(title="Goon", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.base_url, "http://localhost:3000"],
+    allow_origins=[
+        settings.base_url,
+        "http://localhost:3000",
+        "https://www.holdplz.ai",
+        "https://holdplz.ai",
+    ],
     allow_methods=["POST"],
     allow_headers=["Content-Type"],
 )

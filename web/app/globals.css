@@ -1,1 +1,290 @@
 @import "tailwindcss";
+
+/* ---- Color tokens ---- */
+:root {
+  --bg: #eef2ee;
+  --bg-alt: #e2e8e2;
+  --text: #2d3a2d;
+  --text-muted: #5a6b5a;
+  --accent: #f4a261;
+  --accent-hover: #e8924f;
+  --white: #ffffff;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "General Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+/* ---- iPhone frame ---- */
+.iphone-frame {
+  width: 300px;
+  min-height: 480px;
+  background: var(--white);
+  border-radius: 36px;
+  border: 3px solid #c8d0c8;
+  padding: 12px 0 24px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(45, 58, 45, 0.12);
+  overflow: hidden;
+}
+
+.iphone-notch {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 8px;
+}
+
+.iphone-notch-pill {
+  width: 80px;
+  height: 24px;
+  background: #1a1a1a;
+  border-radius: 12px;
+}
+
+.iphone-header {
+  text-align: center;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.iphone-header-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1a1a1a;
+}
+
+.iphone-messages {
+  flex: 1;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+/* ---- SMS bubbles ---- */
+.sms-bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.4;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+}
+
+.sms-outgoing {
+  align-self: flex-end;
+  background: #007aff;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.sms-incoming {
+  align-self: flex-start;
+  background: #e9e9eb;
+  color: #1a1a1a;
+  border-bottom-left-radius: 4px;
+}
+
+.sms-appear {
+  animation: smsSlideIn 0.3s ease-out;
+}
+
+@keyframes smsSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ---- Typing indicator ---- */
+.typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #999;
+  animation: typingBounce 1s infinite;
+}
+
+@keyframes typingBounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-4px);
+  }
+}
+
+/* ---- Pain section ---- */
+.pain-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+@media (min-width: 640px) {
+  .pain-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.pain-card {
+  background: var(--white);
+  border: 1px solid #d4dcd4;
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 15px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  line-height: 1.4;
+}
+
+.pain-card-eq {
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-alt);
+  border: 1px dashed #b8c4b8;
+}
+
+.pain-x {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+/* ---- Equalizer ---- */
+.equalizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 32px;
+}
+
+.eq-bar {
+  width: 6px;
+  background: var(--accent);
+  border-radius: 3px;
+  animation: eqPulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes eqPulse {
+  from {
+    height: 6px;
+  }
+  to {
+    height: 28px;
+  }
+}
+
+/* ---- Waitlist form ---- */
+.waitlist-form {
+  display: flex;
+  gap: 8px;
+  max-width: 420px;
+  width: 100%;
+}
+
+.waitlist-input {
+  flex: 1;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 2px solid #c8d0c8;
+  background: var(--white);
+  font-size: 16px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.waitlist-input:focus {
+  border-color: var(--accent);
+}
+
+.waitlist-input::placeholder {
+  color: #9aa89a;
+}
+
+.waitlist-button {
+  padding: 14px 24px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--white);
+  font-weight: 600;
+  font-size: 15px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  white-space: nowrap;
+}
+
+.waitlist-button:hover {
+  background: var(--accent-hover);
+}
+
+.waitlist-button:active {
+  transform: scale(0.97);
+}
+
+.waitlist-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.waitlist-success {
+  background: var(--white);
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  padding: 14px 24px;
+  font-weight: 500;
+  color: var(--text);
+  max-width: 420px;
+  text-align: center;
+}
+
+.waitlist-error {
+  font-size: 13px;
+  color: #c0392b;
+  margin-top: 4px;
+}
+
+/* ---- Use case bubbles ---- */
+.usecase-bubble {
+  background: var(--white);
+  border: 1px solid #d4dcd4;
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  padding: 12px 18px;
+  font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  color: #444;
+  max-width: 420px;
+}
+
+/* ---- Pricing card ---- */
+.pricing-card {
+  background: var(--white);
+  border: 2px solid #d4dcd4;
+  border-radius: 20px;
+  padding: 40px 32px;
+  max-width: 380px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.pricing-card:hover {
+  border-color: var(--accent);
+  transition: border-color 0.3s;
+}

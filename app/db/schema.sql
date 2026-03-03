@@ -93,7 +93,14 @@ CREATE TABLE IF NOT EXISTS unregistered_attempts (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS waitlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
+CREATE INDEX IF NOT EXISTS idx_waitlist_email ON waitlist(email);
 CREATE INDEX IF NOT EXISTS idx_message_log_user ON message_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_message_log_created ON message_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_call_log_user ON call_log(user_id);
