@@ -1,0 +1,11 @@
+dbs:
+  - path: /data/goon.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: goon.db
+        endpoint: https://s3.${LITESTREAM_REGION}.backblazeb2.com
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+        retention: 72h
+        sync-interval: 10s
