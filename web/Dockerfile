@@ -1,9 +1,9 @@
 FROM node:20-slim AS builder
 
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY web/package.json web/package-lock.json ./
 RUN npm ci
-COPY . .
+COPY web/ .
 ENV NEXT_PUBLIC_API_URL=https://api.holdplz.ai
 RUN npm run build
 
