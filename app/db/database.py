@@ -52,13 +52,32 @@ class Database:
             raise
 
     async def _init_schema(self) -> None:
-        """Run schema.sql to create tables."""
+        """Run schema.sql to create tables, then apply migrations."""
         try:
             schema = SCHEMA_PATH.read_text()
             await self._conn.executescript(schema)
+            await self._migrate()
         except Exception:
             logger.exception("Failed to initialize database schema")
             raise
+
+    async def _migrate(self) -> None:
+        """Apply additive migrations for columns that may not exist yet.
+
+        SQLite has no ALTER TABLE ADD COLUMN IF NOT EXISTS, so we catch
+        errors for columns that already exist.
+        """
+        migrations = [
+            "ALTER TABLE users ADD COLUMN free_messages_used INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN calls_used_this_period INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN billing_period_start TIMESTAMP",
+        ]
+        for sql in migrations:
+            try:
+                await self._conn.execute(sql)
+            except Exception:
+                pass  # column already exists
+        await self._conn.commit()
 
     async def close(self) -> None:
         """Close the database connection."""

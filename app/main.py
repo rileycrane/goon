@@ -1,4 +1,4 @@
-"""Goon — FastAPI entry point."""
+"""Hold Plz -- FastAPI entry point."""
 
 import asyncio
 import logging
@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 
-app = FastAPI(title="Goon", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Hold Plz", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

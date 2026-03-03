@@ -1,5 +1,5 @@
--- Goon DB Schema
--- All table definitions for the Goon AI concierge
+-- Hold Plz DB Schema
+-- All table definitions for the Hold Plz AI concierge
 
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,              -- phone number (E.164)
@@ -7,9 +7,12 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT,
     email TEXT,
     stripe_customer_id TEXT,
-    subscription_status TEXT NOT NULL DEFAULT 'trial',
-    -- valid: trial | active | past_due | canceled
+    subscription_status TEXT NOT NULL DEFAULT 'free',
+    -- valid: free | trial | active | past_due | canceled
     trial_ends_at TIMESTAMP,
+    free_messages_used INTEGER NOT NULL DEFAULT 0,
+    calls_used_this_period INTEGER NOT NULL DEFAULT 0,
+    billing_period_start TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     allowlisted BOOLEAN NOT NULL DEFAULT FALSE  -- manual override for testers
 );
@@ -99,6 +102,18 @@ CREATE TABLE IF NOT EXISTS waitlist (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS phone_start_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_waitlist_email ON waitlist(email);
 CREATE INDEX IF NOT EXISTS idx_message_log_user ON message_log(user_id);
@@ -111,3 +126,4 @@ CREATE INDEX IF NOT EXISTS idx_phone_scores_lookup ON phone_scores(place_id, pho
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(due_at, status);
 CREATE INDEX IF NOT EXISTS idx_unregistered_phone ON unregistered_attempts(phone);
 CREATE INDEX IF NOT EXISTS idx_unregistered_created ON unregistered_attempts(created_at);
+CREATE INDEX IF NOT EXISTS idx_phone_start_phone ON phone_start_attempts(phone);

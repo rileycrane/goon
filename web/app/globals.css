@@ -1,14 +1,16 @@
 @import "tailwindcss";
 
-/* ---- Color tokens ---- */
+/* ---- Color tokens: dark retro 8-bit ---- */
 :root {
-  --bg: #eef2ee;
-  --bg-alt: #e2e8e2;
-  --text: #2d3a2d;
-  --text-muted: #5a6b5a;
-  --accent: #f4a261;
-  --accent-hover: #e8924f;
+  --bg: #0d0d1a;
+  --bg-alt: #13132b;
+  --text: #e8e8f0;
+  --text-muted: #8888a8;
+  --accent: #ff6b35;
+  --accent-hover: #ff8555;
   --white: #ffffff;
+  --border: #2a2a4a;
+  --card-bg: #1a1a35;
 }
 
 body {
@@ -18,17 +20,42 @@ body {
     sans-serif;
 }
 
+/* ---- Pixel border utility ---- */
+.pixel-border {
+  border: 2px solid var(--border);
+  box-shadow:
+    2px 2px 0 var(--border),
+    -2px -2px 0 var(--border),
+    2px -2px 0 var(--border),
+    -2px 2px 0 var(--border);
+}
+
+/* ---- Scanline overlay (optional, subtle) ---- */
+.scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+}
+
 /* ---- iPhone frame ---- */
 .iphone-frame {
   width: 300px;
   min-height: 480px;
-  background: var(--white);
+  background: var(--card-bg);
   border-radius: 36px;
-  border: 3px solid #c8d0c8;
+  border: 2px solid var(--border);
   padding: 12px 0 24px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(45, 58, 45, 0.12);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
   overflow: hidden;
 }
 
@@ -41,20 +68,20 @@ body {
 .iphone-notch-pill {
   width: 80px;
   height: 24px;
-  background: #1a1a1a;
+  background: #0a0a14;
   border-radius: 12px;
 }
 
 .iphone-header {
   text-align: center;
   padding: 8px 0 12px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border);
 }
 
 .iphone-header-name {
   font-weight: 600;
   font-size: 14px;
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 .iphone-messages {
@@ -78,15 +105,15 @@ body {
 
 .sms-outgoing {
   align-self: flex-end;
-  background: #007aff;
-  color: white;
+  background: var(--accent);
+  color: var(--white);
   border-bottom-right-radius: 4px;
 }
 
 .sms-incoming {
   align-self: flex-start;
-  background: #e9e9eb;
-  color: #1a1a1a;
+  background: #252545;
+  color: var(--text);
   border-bottom-left-radius: 4px;
 }
 
@@ -110,7 +137,7 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #999;
+  background: var(--text-muted);
   animation: typingBounce 1s infinite;
 }
 
@@ -141,8 +168,8 @@ body {
 }
 
 .pain-card {
-  background: var(--white);
-  border: 1px solid #d4dcd4;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px 20px;
   font-size: 15px;
@@ -157,7 +184,7 @@ body {
   justify-content: center;
   padding: 24px;
   background: var(--bg-alt);
-  border: 1px dashed #b8c4b8;
+  border: 1px dashed var(--border);
 }
 
 .pain-x {
@@ -189,35 +216,35 @@ body {
   }
 }
 
-/* ---- Waitlist form ---- */
-.waitlist-form {
+/* ---- Phone start form ---- */
+.phone-form {
   display: flex;
   gap: 8px;
   max-width: 420px;
   width: 100%;
 }
 
-.waitlist-input {
+.phone-input {
   flex: 1;
   padding: 14px 18px;
   border-radius: 12px;
-  border: 2px solid #c8d0c8;
-  background: var(--white);
+  border: 2px solid var(--border);
+  background: var(--card-bg);
   font-size: 16px;
   color: var(--text);
   outline: none;
   transition: border-color 0.2s;
 }
 
-.waitlist-input:focus {
+.phone-input:focus {
   border-color: var(--accent);
 }
 
-.waitlist-input::placeholder {
-  color: #9aa89a;
+.phone-input::placeholder {
+  color: var(--text-muted);
 }
 
-.waitlist-button {
+.phone-button {
   padding: 14px 24px;
   border-radius: 12px;
   background: var(--accent);
@@ -230,21 +257,21 @@ body {
   white-space: nowrap;
 }
 
-.waitlist-button:hover {
+.phone-button:hover {
   background: var(--accent-hover);
 }
 
-.waitlist-button:active {
+.phone-button:active {
   transform: scale(0.97);
 }
 
-.waitlist-button:disabled {
+.phone-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.waitlist-success {
-  background: var(--white);
+.phone-success {
+  background: var(--card-bg);
   border: 2px solid var(--accent);
   border-radius: 12px;
   padding: 14px 24px;
@@ -254,29 +281,29 @@ body {
   text-align: center;
 }
 
-.waitlist-error {
+.phone-error {
   font-size: 13px;
-  color: #c0392b;
+  color: #e74c3c;
   margin-top: 4px;
 }
 
 /* ---- Use case bubbles ---- */
 .usecase-bubble {
-  background: var(--white);
-  border: 1px solid #d4dcd4;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
   border-radius: 18px;
   border-bottom-left-radius: 4px;
   padding: 12px 18px;
   font-size: 15px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  color: #444;
+  color: var(--text-muted);
   max-width: 420px;
 }
 
 /* ---- Pricing card ---- */
 .pricing-card {
-  background: var(--white);
-  border: 2px solid #d4dcd4;
+  background: var(--card-bg);
+  border: 2px solid var(--border);
   border-radius: 20px;
   padding: 40px 32px;
   max-width: 380px;
@@ -287,4 +314,23 @@ body {
 .pricing-card:hover {
   border-color: var(--accent);
   transition: border-color 0.3s;
+}
+
+/* ---- Pixel heading font ---- */
+.font-pixel {
+  font-family: "Press Start 2P", monospace;
+}
+
+/* ---- Number display ---- */
+.number-display {
+  font-family: "Press Start 2P", monospace;
+  font-size: 1.25rem;
+  color: var(--accent);
+  letter-spacing: 2px;
+}
+
+@media (min-width: 640px) {
+  .number-display {
+    font-size: 1.5rem;
+  }
 }

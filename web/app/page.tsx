@@ -1,6 +1,8 @@
 import SMSConversation from "./components/SMSConversation";
 import PainPoints from "./components/PainPoints";
-import WaitlistForm from "./components/WaitlistForm";
+import PhoneStartForm from "./components/PhoneStartForm";
+
+const HOLDPLZ_NUMBER = process.env.NEXT_PUBLIC_HOLDPLZ_NUMBER || "(555) 555-HOLD";
 
 const USE_CASES = [
   "book me a table at Flour + Water for 4 at 8pm friday",
@@ -29,8 +31,15 @@ export default function Home() {
               text us what you need. we call the place. you get a text back when
               it's done. restaurants, salons, dentists, vets, whatever.
             </p>
-            <div className="mt-10">
-              <WaitlistForm />
+            <div className="mt-8">
+              <p className="number-display mb-4">{HOLDPLZ_NUMBER}</p>
+              <PhoneStartForm />
+              <p
+                className="mt-3 text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                or just text the number above. 10 free messages, no card needed.
+              </p>
             </div>
           </div>
           <div className="flex-shrink-0">
@@ -70,8 +79,8 @@ export default function Home() {
             />
             <Step
               number="2"
-              title="we call"
-              description="our AI calls the business and handles it."
+              title="we look it up"
+              description="we search for the answer. if we can't find it online, we call the place."
             />
             <Step
               number="3"
@@ -107,29 +116,51 @@ export default function Home() {
       {/* ---- Pricing ---- */}
       <section className="px-6 py-20">
         <div className="mx-auto max-w-2xl">
-          <h2 className="text-3xl sm:text-4xl font-bold text-center mb-12">
-            one plan. no nonsense.
+          <h2 className="text-3xl sm:text-4xl font-bold text-center mb-4">
+            free to try. pay when you need calls.
           </h2>
-          <div className="pricing-card">
-            <p className="text-4xl font-bold">$19.99</p>
-            <p style={{ color: "var(--text-muted)" }} className="mt-1">
-              per month
-            </p>
-            <ul
-              className="mt-8 space-y-3 text-left text-sm"
-              style={{ color: "var(--text-muted)" }}
-            >
-              <li>- unlimited texts</li>
-              <li>- we make the calls so you don't have to</li>
-              <li>- works with any business that has a phone number</li>
-              <li>- remembers your preferences</li>
-            </ul>
-            <p
-              className="mt-8 text-xs"
-              style={{ color: "var(--text-muted)" }}
-            >
-              no contracts. cancel anytime. seriously.
-            </p>
+          <p
+            className="text-center mb-12"
+            style={{ color: "var(--text-muted)" }}
+          >
+            search and lookup is free. calling businesses is for paid members.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-6 justify-center">
+            <div className="pricing-card flex-1">
+              <p className="text-2xl font-bold">free</p>
+              <p style={{ color: "var(--text-muted)" }} className="mt-1">
+                forever
+              </p>
+              <ul
+                className="mt-8 space-y-3 text-left text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                <li>- 10 messages to try it out</li>
+                <li>- business search and info lookup</li>
+                <li>- hours, menus, prices, reviews</li>
+              </ul>
+            </div>
+            <div className="pricing-card flex-1" style={{ borderColor: "var(--accent)" }}>
+              <p className="text-4xl font-bold">$19.99</p>
+              <p style={{ color: "var(--text-muted)" }} className="mt-1">
+                per month
+              </p>
+              <ul
+                className="mt-8 space-y-3 text-left text-sm"
+                style={{ color: "var(--text-muted)" }}
+              >
+                <li>- 20 calls to businesses per month</li>
+                <li>- unlimited text messages</li>
+                <li>- reservations, appointments, custom requests</li>
+                <li>- remembers your preferences</li>
+              </ul>
+              <p
+                className="mt-8 text-xs"
+                style={{ color: "var(--text-muted)" }}
+              >
+                no contracts. cancel anytime.
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -138,23 +169,23 @@ export default function Home() {
       <section className="px-6 py-20" style={{ background: "var(--bg-alt)" }}>
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-            we're almost ready. get in line.
+            stop calling. start texting.
           </h2>
           <p
-            className="mb-10"
+            className="mb-6"
             style={{ color: "var(--text-muted)" }}
           >
-            early access coming soon. no phone call required to sign up.
+            enter your number and we'll text you. or just text {HOLDPLZ_NUMBER} directly.
           </p>
           <div className="flex justify-center">
-            <WaitlistForm />
+            <PhoneStartForm />
           </div>
         </div>
       </section>
 
       {/* ---- Footer ---- */}
       <footer className="px-6 py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-        <p className="font-semibold" style={{ color: "var(--text)" }}>
+        <p className="font-semibold font-pixel text-xs" style={{ color: "var(--accent)" }}>
           hold plz
         </p>
         <p className="mt-2">hello@holdplz.ai</p>

@@ -16,7 +16,10 @@ class Settings:
     # Twilio
     twilio_account_sid: str = os.getenv("TWILIO_ACCOUNT_SID", "")
     twilio_auth_token: str = os.getenv("TWILIO_AUTH_TOKEN", "")
-    goon_number: str = os.getenv("GOON_NUMBER", "")
+    holdplz_number: str = os.getenv("HOLDPLZ_NUMBER", os.getenv("GOON_NUMBER", ""))
+    holdplz_number_display: str = os.getenv("HOLDPLZ_NUMBER_DISPLAY", "(555) 555-HOLD")
+    # Backward compat
+    goon_number: str = os.getenv("HOLDPLZ_NUMBER", os.getenv("GOON_NUMBER", ""))
 
     # Vapi
     vapi_api_key: str = os.getenv("VAPI_API_KEY", "")
@@ -35,6 +38,8 @@ class Settings:
     # Stripe
     stripe_secret_key: str = os.getenv("STRIPE_SECRET_KEY", "")
     stripe_webhook_secret: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    stripe_price_id: str = os.getenv("STRIPE_PRICE_ID", "")
+    stripe_payment_link_url: str = os.getenv("STRIPE_PAYMENT_LINK_URL", "")
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///data/goon.db")
@@ -43,8 +48,13 @@ class Settings:
     )
 
     # Server
-    base_url: str = os.getenv("BASE_URL", "http://localhost:8000")
+    base_url: str = os.getenv("BASE_URL", "https://holdplz.ai")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "")
+
+    # Free tier
+    free_message_limit: int = int(os.getenv("FREE_MESSAGE_LIMIT", "10"))
+    signups_enabled: bool = os.getenv("SIGNUPS_ENABLED", "true").lower() == "true"
+    monthly_call_quota: int = int(os.getenv("MONTHLY_CALL_QUOTA", "20"))
 
     # Call recording (two-party consent compliance)
     enable_call_recording: bool = (

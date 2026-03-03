@@ -46,13 +46,13 @@ async def handle_unregistered(phone: str, body: str) -> str:
             response = await compose_teaser(body, attempt_count=n, history=history)
         else:
             response = (
-                f"You've texted {n} times -- looks like you could use a Goon. "
+                f"You've texted {n} times -- sounds like you need Hold Plz. "
                 f"Sign up: {settings.base_url}/signup"
             )
     except Exception:
         logger.exception("Failed to compose teaser for %s", phone)
         response = (
-            f"Hey! Goon is an AI concierge that handles calls and errands for you. "
+            f"Hey! Hold Plz is an AI concierge that handles calls for you. "
             f"Sign up at {settings.base_url}/signup to get started."
         )
 
@@ -106,7 +106,7 @@ async def compose_teaser(
     except Exception:
         logger.exception("Failed to compose teaser via LLM")
         return (
-            f"Hey! Goon is an AI concierge that handles calls and errands for you. "
+            f"Hey! Hold Plz is an AI concierge that handles calls for you. "
             f"Sign up at {settings.base_url}/signup to get started."
         )
 
@@ -114,7 +114,7 @@ async def compose_teaser(
 async def get_teaser_response() -> str:
     """Return a static teaser response for unregistered users."""
     return (
-        "Hey! Goon is an AI concierge that handles calls and errands for you. "
+        "Hey! Hold Plz is an AI concierge that handles calls for you. "
         f"Sign up at {settings.base_url} to get started."
     )
 

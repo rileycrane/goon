@@ -9,7 +9,7 @@ from datetime import datetime
 import anthropic
 
 from app.db.database import db
-from app.services.auth import get_user
+from app.services.auth import get_user, increment_call_count, is_call_quota_available
 from app.services.cache import check_cache
 from app.services.calls import check_duplicate_call, initiate_outbound_call, pre_call_check
 from app.services.memory import load_memory, update_memory
@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-5-20250929"
 MAX_TOOL_ROUNDS = 10
+
+# Tools that require a paid subscription
+GATED_TOOLS = {"call_business", "pre_call_check"}
 
 # ---- Resolution ladder instruction for the system prompt ----
 
@@ -215,11 +218,38 @@ class OrchestratorResult:
 
 # ---- System prompt builder ----
 
-def build_system_prompt(user: dict, memory) -> str:
+def build_system_prompt(
+    user: dict, memory, is_free_tier: bool = False
+) -> str:
     """Build the system prompt with user context and resolution ladder."""
     name = user.get("name", "there")
     phone = user.get("phone", user.get("id", ""))
     soul = get_sms_soul()
+
+    # Free tier context
+    free_tier_section = ""
+    if is_free_tier:
+        used = user.get("free_messages_used", 0)
+        limit = settings.free_message_limit
+        remaining = max(0, limit - used)
+        free_tier_section = f"""
+## Access Level: Free Tier
+This user has {remaining} free messages remaining (of {limit}).
+They can search for business info but CANNOT make calls.
+Do NOT mention calling businesses as an option.
+If the user asks you to call somewhere, explain that calling requires the paid plan
+and they can text "pay" to upgrade ($19.99/mo, 20 calls).
+Keep responses helpful — show the value of what you can do for free (search, lookup, info).
+"""
+    else:
+        calls_used = user.get("calls_used_this_period", 0)
+        quota = settings.monthly_call_quota
+        calls_remaining = max(0, quota - calls_used)
+        if not user.get("allowlisted"):
+            free_tier_section = f"""
+## Call Quota
+User has {calls_remaining} calls remaining this billing period (of {quota}).
+"""
 
     return f"""{soul}
 
@@ -229,9 +259,12 @@ You are texting with {name} (phone: {phone}).
 Today: {datetime.now().isoformat()}
 
 {RESOLUTION_LADDER_INSTRUCTION}
+{free_tier_section}
 
 ## User Memory
 {memory.profile}
+
+{memory.long_term_memory_section}
 
 ## Conversation History (last 5 + last interaction per active business)
 {memory.formatted_recent}
@@ -276,8 +309,16 @@ async def _execute_tool(
     tool_input: dict,
     user: dict,
     memory_updates: list[dict],
+    is_free_tier: bool = False,
 ) -> str:
     """Execute a single tool call and return the result as a string."""
+    # Defense-in-depth: block gated tools for free tier even if LLM hallucinates them
+    if is_free_tier and tool_name in GATED_TOOLS:
+        return (
+            "This feature requires a paid subscription. "
+            "The user can text 'pay' to upgrade."
+        )
+
     try:
         if tool_name == "check_cache":
             result = await check_cache(
@@ -320,6 +361,12 @@ async def _execute_tool(
                 return f"Pre-call check FAILED: {issues_text}"
 
         elif tool_name == "call_business":
+            # Call quota check for paying users
+            if not await is_call_quota_available(user, settings.monthly_call_quota):
+                return (
+                    f"Call quota reached ({settings.monthly_call_quota} calls/month). "
+                    "The user's quota resets at the start of their next billing period."
+                )
             # Route test businesses to test phone before calling
             if settings.enable_test_businesses:
                 query = tool_input["business_name"].lower()
@@ -349,6 +396,8 @@ async def _execute_tool(
                 user_name=user_name,
                 details=tool_input.get("details"),
             )
+            # Track call usage against quota
+            await increment_call_count(user.get("phone", user_id))
             return (
                 f"Call initiated (id: {call_result['vapi_call_id']}). "
                 f"Result will arrive via webhook."
@@ -385,7 +434,9 @@ async def _execute_tool(
 
 # ---- Public API ----
 
-async def handle_message(user_id: str, message: str) -> str:
+async def handle_message(
+    user_id: str, message: str, is_free_tier: bool = False
+) -> str:
     """Process a user message through the resolution ladder.
 
     Called by the SMS webhook. Loads user + memory, runs the Claude
@@ -400,7 +451,11 @@ async def handle_message(user_id: str, message: str) -> str:
     memory = await load_memory(user_id)
 
     # Build the conversation for Claude
-    system = build_system_prompt(user, memory)
+    system = build_system_prompt(user, memory, is_free_tier=is_free_tier)
+
+    # Filter tools for free tier — LLM can't even see gated tools
+    active_tools = [t for t in TOOLS if t["name"] not in GATED_TOOLS] if is_free_tier else TOOLS
+
     messages: list[dict] = [{"role": "user", "content": message}]
 
     client = anthropic.AsyncAnthropic()
@@ -414,7 +469,7 @@ async def handle_message(user_id: str, message: str) -> str:
                 model=MODEL,
                 max_tokens=1024,
                 system=system,
-                tools=TOOLS,
+                tools=active_tools,
                 messages=messages,
             )
         except anthropic.RateLimitError:
@@ -444,6 +499,7 @@ async def handle_message(user_id: str, message: str) -> str:
 
             result = await _execute_tool(
                 block.name, block.input, user, memory_updates,
+                is_free_tier=is_free_tier,
             )
 
             # Capture call plan if call_business was invoked

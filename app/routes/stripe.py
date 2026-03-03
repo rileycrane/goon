@@ -42,16 +42,24 @@ async def stripe_webhook(
 
     try:
         if event_type == "checkout.session.completed":
-            user = await handle_checkout_completed(data)
+            user, was_upgrade = await handle_checkout_completed(data)
             if user:
                 from app.services.sms import send_sms
 
-                await send_sms(
-                    user["phone"],
-                    f"Hey {user['name']}, this is Goon. Text me when you "
-                    "need something done -- restaurant reservations, business "
-                    "questions, anything. I'll handle it.",
-                )
+                if was_upgrade:
+                    await send_sms(
+                        user["phone"],
+                        "You're in. I can make calls for you now -- "
+                        "20 per month. Text me what you need.",
+                    )
+                else:
+                    name = user.get("name") or "there"
+                    await send_sms(
+                        user["phone"],
+                        f"Hey {name}, this is Hold Plz. Text me when you "
+                        "need something done -- restaurant reservations, business "
+                        "questions, anything. I'll handle it.",
+                    )
 
         elif event_type == "customer.subscription.updated":
             await handle_subscription_updated(data)

@@ -21,7 +21,7 @@ from app.services.sms import send_sms
 logger = logging.getLogger(__name__)
 
 
-async def compute_triggers(user_id: str) -> list[dict]:
+async def compute_triggers(user_id: str, user: dict | None = None) -> list[dict]:
     """Check for actionable triggers for a user (deterministic, no LLM).
 
     Returns a list of trigger dicts, each with at least a "type" key.
@@ -29,6 +29,39 @@ async def compute_triggers(user_id: str) -> list[dict]:
     """
     triggers: list[dict] = []
     now = datetime.now()
+
+    # 0. Free tier re-engagement: 24-72h after paywall hit, if user hasn't paid
+    if user and user.get("subscription_status") == "free":
+        from app.services.auth import is_free_tier_exhausted
+        from app.config import settings as _settings
+
+        if is_free_tier_exhausted(user, _settings.free_message_limit):
+            # Check if we already sent a re-engagement
+            already_sent = await db.fetch_one(
+                """SELECT id FROM scheduled_tasks
+                   WHERE user_id = ? AND trigger = 'free_tier_reengagement'
+                   AND status = 'fired'""",
+                [user_id],
+            )
+            if not already_sent:
+                # Check last message time — fire 24-72h after paywall
+                last_msg = await db.fetch_one(
+                    """SELECT MAX(created_at) as last_at FROM message_log
+                       WHERE user_id = ? AND direction = 'in'""",
+                    [user_id],
+                )
+                if last_msg and last_msg["last_at"]:
+                    try:
+                        last_time = datetime.fromisoformat(last_msg["last_at"])
+                        hours_since = (now - last_time).total_seconds() / 3600
+                        if 24 <= hours_since <= 72:
+                            triggers.append({
+                                "type": "free_tier_reengagement",
+                                "detail": "User hit paywall and went quiet. Nudge them.",
+                                "hours_since_last": round(hours_since),
+                            })
+                    except (ValueError, TypeError):
+                        pass
 
     # 1. Scheduled followups that are due
     due_tasks = await db.fetch_all(
@@ -179,6 +212,13 @@ async def compose_proactive_message(
                 f"- {t['service']} is due (last: {t['last_date']}, "
                 f"due: {t['next_due']})"
             )
+        elif t["type"] == "free_tier_reengagement":
+            trigger_lines.append(
+                "- Free user hit paywall and went quiet. "
+                "Nudge them with something specific from their history. "
+                "Mention the paid plan lets you call businesses. "
+                "Text 'pay' to upgrade."
+            )
         else:
             trigger_lines.append(f"- {t['type']}: {t.get('detail', '')}")
 
@@ -227,19 +267,19 @@ Return ONLY the SMS text, nothing else.""",
 
 
 async def run_proactive_checks() -> int:
-    """Run proactive trigger checks for all active users.
+    """Run proactive trigger checks for all active and free users.
 
     Returns the number of messages sent.
     """
     users = await db.fetch_all(
-        "SELECT id FROM users WHERE subscription_status IN ('active', 'trial')"
+        "SELECT * FROM users WHERE subscription_status IN ('active', 'trial', 'free')"
     )
 
     sent = 0
     for user in users:
         user_id = user["id"]
         try:
-            triggers = await compute_triggers(user_id)
+            triggers = await compute_triggers(user_id, user=dict(user))
             if not triggers:
                 continue
 
@@ -254,6 +294,17 @@ async def run_proactive_checks() -> int:
                 message,
                 metadata={"type": "proactive", "triggers": [t["type"] for t in triggers]},
             )
+
+            # Log re-engagement so we don't send it again
+            for t in triggers:
+                if t["type"] == "free_tier_reengagement":
+                    await db.execute(
+                        """INSERT INTO scheduled_tasks
+                           (user_id, message, trigger, due_at, status)
+                           VALUES (?, ?, 'free_tier_reengagement', CURRENT_TIMESTAMP, 'fired')""",
+                        [user_id, message],
+                    )
+
             sent += 1
             logger.info("Proactive message sent to %s: %s", user_id, message[:60])
 

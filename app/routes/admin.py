@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.db.database import db
+from app.services.auth import get_signups_enabled, set_signups_enabled
 
 router = APIRouter()
 
@@ -67,3 +68,61 @@ async def list_messages(
         "SELECT * FROM message_log ORDER BY created_at DESC LIMIT 20"
     )
     return {"messages": rows}
+
+
+class SignupsToggle(BaseModel):
+    enabled: bool
+
+
+@router.post("/settings/signups")
+async def toggle_signups(
+    body: SignupsToggle,
+    x_admin_password: str | None = Header(None),
+) -> dict:
+    """Toggle signups_enabled setting (runtime, stored in DB)."""
+    _check_admin(x_admin_password)
+    await set_signups_enabled(body.enabled)
+    return {"status": "ok", "signups_enabled": body.enabled}
+
+
+@router.get("/settings/signups")
+async def get_signups_status(
+    x_admin_password: str | None = Header(None),
+) -> dict:
+    """Get current signups_enabled status."""
+    _check_admin(x_admin_password)
+    enabled = await get_signups_enabled()
+    return {"signups_enabled": enabled}
+
+
+@router.get("/users")
+async def list_users(
+    x_admin_password: str | None = Header(None),
+) -> dict:
+    """List all users with tier, message count, call count."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        """SELECT id, phone, name, subscription_status, allowlisted,
+                  free_messages_used, calls_used_this_period, created_at
+           FROM users ORDER BY created_at DESC"""
+    )
+    return {"users": rows}
+
+
+class AllowlistToggle(BaseModel):
+    allowlisted: bool
+
+
+@router.post("/users/{phone}/allowlist")
+async def toggle_allowlist(
+    phone: str,
+    body: AllowlistToggle,
+    x_admin_password: str | None = Header(None),
+) -> dict:
+    """Toggle allowlist status for a user."""
+    _check_admin(x_admin_password)
+    await db.execute(
+        "UPDATE users SET allowlisted = ? WHERE phone = ?",
+        [body.allowlisted, phone],
+    )
+    return {"status": "ok", "phone": phone, "allowlisted": body.allowlisted}

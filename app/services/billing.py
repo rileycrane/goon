@@ -1,3 +1,6 @@
+import logging
+import urllib.parse
+
 import stripe
 
 from app.config import settings
@@ -5,11 +8,36 @@ from app.db.database import db
 from app.services.auth import (
     create_user,
     get_user,
+    reset_call_count,
     set_stripe_customer_id,
     update_subscription_status,
 )
 
+logger = logging.getLogger(__name__)
+
 stripe.api_key = settings.stripe_secret_key
+
+
+async def send_payment_link(phone: str) -> None:
+    """Send Stripe Payment Link URL via SMS with client_reference_id."""
+    from app.services.sms import send_sms
+
+    if not settings.stripe_payment_link_url:
+        await send_sms(
+            phone,
+            "Payment isn't set up yet. Hang tight -- we'll have it ready soon.",
+        )
+        return
+
+    # Append client_reference_id so webhook can identify the phone
+    url = (
+        f"{settings.stripe_payment_link_url}"
+        f"?client_reference_id={urllib.parse.quote(phone)}"
+    )
+    await send_sms(
+        phone,
+        f"Here's your link to upgrade Hold Plz ($19.99/mo, 20 calls): {url}",
+    )
 
 
 async def create_checkout_session(
@@ -44,36 +72,43 @@ async def create_checkout_session(
     return session.url
 
 
-async def handle_checkout_completed(session: dict) -> dict | None:
+async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
     """Process a successful Stripe checkout.
 
-    Creates the user record and returns the new user, or None if
-    the user already exists.
+    Returns (user, was_upgrade) — was_upgrade is True if user went from free→active.
     """
     customer_id = session["customer"]
     metadata = session.get("metadata", {})
+
+    # Check both metadata.goon_phone and client_reference_id for phone
     phone = metadata.get("goon_phone", "")
+    if not phone:
+        phone = session.get("client_reference_id", "")
     name = metadata.get("goon_name", "")
 
     if not phone:
-        return None
+        return None, False
 
     customer = stripe.Customer.retrieve(customer_id)
     email = customer.get("email", "")
 
     existing = await get_user(phone)
     if existing:
+        was_free = existing["subscription_status"] == "free"
         await update_subscription_status(phone, "active")
         await set_stripe_customer_id(phone, customer_id)
-        return await get_user(phone)
+        await reset_call_count(phone)
+        return await get_user(phone), was_free
 
-    return await create_user(
+    user = await create_user(
         phone=phone,
         name=name,
         email=email,
         stripe_customer_id=customer_id,
         subscription_status="active",
     )
+    await reset_call_count(phone)
+    return user, False
 
 
 async def handle_subscription_updated(subscription: dict) -> None:
@@ -90,11 +125,14 @@ async def handle_subscription_updated(subscription: dict) -> None:
         "incomplete_expired": "canceled",
         "trialing": "trial",
     }
-    goon_status = status_map.get(status, "canceled")
+    holdplz_status = status_map.get(status, "canceled")
 
     user = await _get_user_by_stripe_id(customer_id)
     if user:
-        await update_subscription_status(user["phone"], goon_status)
+        await update_subscription_status(user["phone"], holdplz_status)
+        # Reset call count on renewal (status going back to active)
+        if holdplz_status == "active" and user["subscription_status"] != "active":
+            await reset_call_count(user["phone"])
 
 
 async def handle_subscription_deleted(subscription: dict) -> None:

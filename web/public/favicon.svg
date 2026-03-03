@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- 8-bit phone character: pixel art style -->
+  <!-- Background -->
+  <rect width="32" height="32" rx="4" fill="#0d0d1a"/>
+  <!-- Phone body -->
+  <rect x="10" y="4" width="12" height="24" rx="2" fill="#ff6b35"/>
+  <!-- Screen -->
+  <rect x="12" y="7" width="8" height="12" fill="#0d0d1a"/>
+  <!-- Pixel eyes on screen -->
+  <rect x="13" y="10" width="2" height="2" fill="#ff6b35"/>
+  <rect x="17" y="10" width="2" height="2" fill="#ff6b35"/>
+  <!-- Pixel mouth (smile) -->
+  <rect x="13" y="14" width="1" height="1" fill="#ff6b35"/>
+  <rect x="14" y="15" width="4" height="1" fill="#ff6b35"/>
+  <rect x="18" y="14" width="1" height="1" fill="#ff6b35"/>
+  <!-- Home button -->
+  <rect x="14" y="22" width="4" height="2" rx="1" fill="#0d0d1a"/>
+  <!-- Signal waves (left) -->
+  <rect x="6" y="8" width="2" height="2" fill="#ff6b35" opacity="0.4"/>
+  <rect x="4" y="6" width="2" height="2" fill="#ff6b35" opacity="0.3"/>
+  <!-- Signal waves (right) -->
+  <rect x="24" y="8" width="2" height="2" fill="#ff6b35" opacity="0.4"/>
+  <rect x="26" y="6" width="2" height="2" fill="#ff6b35" opacity="0.3"/>
+</svg>

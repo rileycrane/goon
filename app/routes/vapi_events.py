@@ -89,14 +89,14 @@ async def _handle_assistant_request(event: dict) -> dict:
                     "model": "claude-sonnet-4-5-20250929",
                     "messages": [{
                         "role": "system",
-                        "content": "Tell the caller that this number is not registered with Goon. They can sign up at the website. Be brief and polite, then end the call.",
+                        "content": "Tell the caller that this number is not registered with Hold Plz. They can sign up at the website. Be brief and polite, then end the call.",
                     }],
                 },
                 "voice": {
                     "provider": "11labs",
                     "voiceId": "jBzLvP03992lMFEkj2kJ",
                 },
-                "firstMessage": "Sorry, this number isn't registered with Goon. Visit our website to sign up. Goodbye.",
+                "firstMessage": "Sorry, this number isn't registered with Hold Plz. Visit our website to sign up. Goodbye.",
                 "endCallFunctionEnabled": True,
                 "maxDurationSeconds": 15,
             }

@@ -51,8 +51,8 @@ async def voice_webhook(request: Request) -> Response:
         twiml = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             "<Response>"
-            "<Say>Sorry, this number is not registered with Goon. "
-            "Visit get goon dot com to sign up.</Say>"
+            "<Say>Sorry, this number is not registered with Hold Plz. "
+            "Visit hold plz dot ai to sign up.</Say>"
             "<Hangup/>"
             "</Response>"
         )
