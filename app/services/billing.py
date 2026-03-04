@@ -111,29 +111,50 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
 
     Returns (user, was_upgrade) — was_upgrade is True if user went from free→active.
     """
-    customer_id = session["customer"]
+    customer_id = session.get("customer")
     metadata = session.get("metadata", {})
 
     # Check both metadata.goon_phone and client_reference_id for phone
     phone = metadata.get("goon_phone", "")
     if not phone:
-        phone = session.get("client_reference_id", "")
+        phone = session.get("client_reference_id", "") or ""
     name = metadata.get("goon_name", "")
 
+    # Get email from customer_details (always present on checkout sessions)
+    checkout_email = (session.get("customer_details") or {}).get("email", "")
+
     logger.info(
-        "handle_checkout_completed: phone=%s name=%s customer=%s client_ref=%s",
-        phone, name, customer_id, session.get("client_reference_id", ""),
+        "handle_checkout_completed: phone=%s name=%s customer=%s client_ref=%s email=%s",
+        phone, name, customer_id, session.get("client_reference_id", ""), checkout_email,
     )
+
+    # Fallback: if no phone from metadata/client_ref, try matching by email
+    if not phone and checkout_email:
+        user_by_email = await db.fetch_one(
+            "SELECT phone FROM users WHERE email = ? LIMIT 1", [checkout_email]
+        )
+        if user_by_email:
+            phone = user_by_email["phone"]
+            logger.info("handle_checkout_completed: matched phone %s by email %s", phone, checkout_email)
+
+    # Last resort: find the most recent user who was sent a payment link
+    if not phone:
+        recent = await db.fetch_one(
+            """SELECT user_id FROM message_log
+               WHERE direction = 'out' AND body LIKE '%buy.stripe.com%'
+               ORDER BY created_at DESC LIMIT 1"""
+        )
+        if recent:
+            phone = recent["user_id"]
+            logger.info("handle_checkout_completed: matched phone %s from recent payment link SMS", phone)
 
     if not phone:
         logger.warning("handle_checkout_completed: no phone found in session")
         return None, False
 
     # Normalize phone — Stripe may URL-encode or strip the + prefix
-    import urllib.parse
     phone = urllib.parse.unquote(phone)
     if not phone.startswith("+"):
-        # Assume US number if 10-11 digits
         digits = phone.lstrip("+")
         if len(digits) == 10:
             phone = f"+1{digits}"
@@ -142,8 +163,13 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
         else:
             phone = f"+{digits}"
 
-    customer = stripe.Customer.retrieve(customer_id)
-    email = customer.get("email", "")
+    email = checkout_email
+    if customer_id:
+        try:
+            customer = stripe.Customer.retrieve(customer_id)
+            email = customer.get("email", "") or email
+        except Exception:
+            logger.debug("Could not retrieve Stripe customer %s", customer_id)
 
     # Detect plan type from payment link used
     plan_type = _detect_plan_type(session)
@@ -152,7 +178,8 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
     if existing:
         was_free = existing["subscription_status"] == "free"
         await update_subscription_status(phone, "active")
-        await set_stripe_customer_id(phone, customer_id)
+        if customer_id:
+            await set_stripe_customer_id(phone, customer_id)
         await reset_call_count(phone)
         try:
             await db.execute(

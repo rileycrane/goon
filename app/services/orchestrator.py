@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -26,6 +28,9 @@ MAX_TOOL_ROUNDS = 10
 
 # Tools that require a paid subscription
 GATED_TOOLS = {"call_business", "pre_call_check"}
+
+# Regex to find Stripe payment link URLs (with or without query params)
+_STRIPE_URL_RE = re.compile(r"https://buy\.stripe\.com/[^\s)>\]\"']+")
 
 # ---- Resolution ladder instruction for the system prompt ----
 
@@ -284,7 +289,7 @@ def build_system_prompt(
 This user is on the free plan. You can suggest calling businesses when it makes sense.
 If the user wants you to call, go ahead and try — the system will handle the upgrade prompt.
 If a call tool returns a payment-required message, let the user know warmly that calling
-is on the paid plan ($19.99/mo, 20 calls) and they can text "pay" or use the link sent.
+is on the paid plan -- $9.99/mo unlimited or $1 per call. Include the payment links from the tool result.
 Don't hard-sell. Mention it once, then move on.
 """
     else:
@@ -578,6 +583,28 @@ async def _build_business_context(user_id: str, message: str, memory) -> str:
         return ""
 
 
+def _fix_payment_urls(text: str, phone: str) -> str:
+    """Ensure Stripe payment link URLs in LLM output have client_reference_id.
+
+    LLMs often strip query parameters from URLs. This post-processes the
+    response to re-inject the client_reference_id so Stripe can link
+    the checkout back to the user.
+    """
+    if "buy.stripe.com" not in text:
+        return text
+
+    encoded_phone = urllib.parse.quote(phone, safe="")
+
+    def _ensure_ref(match: re.Match) -> str:
+        url = match.group(0)
+        if "client_reference_id" in url:
+            return url  # already has it
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}client_reference_id={encoded_phone}"
+
+    return _STRIPE_URL_RE.sub(_ensure_ref, text)
+
+
 # ---- Public API ----
 
 async def handle_message(
@@ -689,6 +716,9 @@ async def handle_message(
             ))
         except Exception:
             pass
+
+    # Ensure Stripe payment URLs have client_reference_id for linking
+    result_text = _fix_payment_urls(result_text, user_id)
 
     # Persist memory (conversation + any LLM-generated updates)
     if not dry_run:
