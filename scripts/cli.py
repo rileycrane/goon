@@ -370,6 +370,49 @@ def calls_transcript(ctx, call_id: int):
     click.echo(data.get("transcript", "(no transcript)"))
 
 
+@calls.command("trigger")
+@click.option("--business-name", "-b", required=True, help="Business name")
+@click.option("--business-phone", "-p", required=True, help="Business phone number")
+@click.option("--task", "-t", required=True, help="Task for the voice agent")
+@click.option("--task-type", default="information",
+              type=click.Choice(["information", "reservation", "appointment", "availability_check", "custom_request"]))
+@click.option("--place-id", default=None, help="Google Places ID (optional)")
+@click.pass_context
+def calls_trigger(ctx, business_name: str, business_phone: str, task: str,
+                  task_type: str, place_id: str | None):
+    """Manually trigger an outbound call. Bypasses payment gate."""
+    phone = ctx.obj["phone"]
+    body = {
+        "phone": phone,
+        "business_name": business_name,
+        "business_phone": business_phone,
+        "task": task,
+        "task_type": task_type,
+    }
+    if place_id:
+        body["place_id"] = place_id
+    data = api("POST", "/trigger-call", json=body)
+    click.echo(f"Call triggered:")
+    click.echo(f"  call_log_id:  {data.get('call_log_id')}")
+    click.echo(f"  vapi_call_id: {data.get('vapi_call_id')}")
+    click.echo(f"  status:       {data.get('call_status')}")
+
+
+@calls.command("replay")
+@click.argument("message")
+@click.pass_context
+def calls_replay(ctx, message: str):
+    """Replay a message through the orchestrator (payment gate bypassed).
+
+    Useful for re-triggering a request after payment.
+    Example: cli.py calls +1234567890 replay "Call Riley's Pizza and make a reservation for 2 at 7pm"
+    """
+    phone = ctx.obj["phone"]
+    data = api("POST", "/replay", json={"phone": phone, "message": message})
+    click.echo(f"Response: {data.get('response')}")
+    click.echo(f"SMS sent: {data.get('sms_sent')}")
+
+
 # ---- biz ----
 
 @cli.group()

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import anthropic
 
 from app.db.database import db
+from app.services.llm import create as llm_create
 from app.services.auth import get_user, increment_call_count, is_call_quota_available
 from app.services.cache import check_cache
 from app.services.calls import check_duplicate_call, initiate_outbound_call, pre_call_check
@@ -461,7 +462,11 @@ async def _execute_tool(
                 user_plan = user.get("plan_type", "basic")
                 if user_plan == "request":
                     from app.services.billing import verify_payment_method
-                    has_method = await verify_payment_method(user.get("id", user.get("phone", "")))
+                    user_phone = user.get("id", user.get("phone", ""))
+                    has_method = await verify_payment_method(user_phone)
+                    # Also check if the user paid recently (Payment Links don't save cards)
+                    if not has_method:
+                        has_method = await _has_recent_payment(user_phone)
                     if not has_method:
                         return (
                             "This user is on the pay-per-request plan but has no payment method on file. "
@@ -585,6 +590,38 @@ async def _build_business_context(user_id: str, message: str, memory) -> str:
         return ""
 
 
+async def _has_recent_payment(user_id: str) -> bool:
+    """Check if user made a payment in the last 30 minutes.
+
+    Payment Links don't save cards, so verify_payment_method returns False
+    even after a successful $1 payment. This checks the billing event log
+    (subscription_status change to 'active') as a proxy.
+    """
+    try:
+        recent = await db.fetch_one(
+            """SELECT 1 FROM users
+               WHERE id = ? AND subscription_status = 'active'
+                 AND updated_at > datetime('now', '-30 minutes')""",
+            [user_id],
+        )
+        if recent:
+            return True
+        # Also check if there was a recent Stripe checkout message in message_log
+        # (the welcome message or payment link response)
+        recent_checkout = await db.fetch_one(
+            """SELECT 1 FROM message_log
+               WHERE user_id = ? AND direction = 'out'
+                 AND body LIKE '%you''re all set%'
+                 AND created_at > datetime('now', '-30 minutes')
+               LIMIT 1""",
+            [user_id],
+        )
+        return recent_checkout is not None
+    except Exception:
+        logger.exception("Failed to check recent payment for %s", user_id)
+        return False
+
+
 def _fix_payment_urls(text: str, phone: str) -> str:
     """Ensure Stripe payment link URLs in LLM output have client_reference_id.
 
@@ -643,31 +680,22 @@ async def handle_message(
 
     messages: list[dict] = [{"role": "user", "content": message}]
 
-    client = anthropic.AsyncAnthropic()
     memory_updates: list[dict] = []
     call_plan: dict | None = None
 
     # Agentic loop: LLM decides which tools to call
     for _ in range(MAX_TOOL_ROUNDS):
-        try:
-            response = await client.messages.create(
-                model=MODEL,
-                max_tokens=1024,
-                system=system,
-                tools=active_tools,
-                messages=messages,
-            )
-        except anthropic.RateLimitError:
-            logger.warning("Anthropic rate limit hit for user %s", user_id)
-            result_text = "I'm a bit overloaded right now. Try again in a minute."
-            break
-        except anthropic.APIStatusError as exc:
-            logger.error("Anthropic API error %d: %s", exc.status_code, exc.message)
-            result_text = "Something went wrong on my end. Try again in a minute."
-            break
-        except Exception:
-            logger.exception("Unexpected error calling Anthropic API")
-            result_text = "Something went wrong on my end. Try again in a minute."
+        response = await llm_create(
+            messages=messages,
+            system=system,
+            tools=active_tools,
+            max_tokens=1024,
+            tier="premium",
+        )
+
+        if response is None:
+            logger.error("All LLM models failed for user %s", user_id)
+            result_text = "I'm having trouble right now -- all my models are down. Try again in a few minutes."
             break
 
         # If no tool use, we have our final answer

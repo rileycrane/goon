@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-import anthropic
 from fastapi import APIRouter, Request
 
 from app.config.settings import settings
@@ -372,28 +371,30 @@ def classify_call_outcome(ended_reason: str, transcript: str) -> dict:
 
 async def summarize_call_result(transcript: str, task: str) -> str:
     """Summarize a call transcript into an SMS-length response."""
-    client = anthropic.AsyncAnthropic()
+    from app.services.llm import create as llm_create, extract_text
+
     try:
-        response = await client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+        resp = await llm_create(
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Summarize this phone call result in 1-2 sentences for an SMS. "
+                    f"Be concise, no emoji. The user's original request was: {task}\n\n"
+                    f"Transcript:\n{transcript[:2000]}"
+                ),
+            }],
             max_tokens=200,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"Summarize this phone call result in 1-2 sentences for an SMS. "
-                        f"Be concise, no emoji. The user's original request was: {task}\n\n"
-                        f"Transcript:\n{transcript[:2000]}"
-                    ),
-                }
-            ],
+            tier="premium",
         )
-        return response.content[0].text.strip()
+        text = extract_text(resp)
+        if text:
+            return text.strip()
     except Exception:
         logger.exception("Failed to summarize call transcript")
-        # Fallback: return a truncated transcript snippet
-        snippet = transcript[:150].strip() if transcript else "Call completed"
-        return f"Call result: {snippet}..."
+
+    # Fallback: return a truncated transcript snippet
+    snippet = transcript[:150].strip() if transcript else "Call completed"
+    return f"Call result: {snippet}..."
 
 
 async def _ensure_call_status_updated(call_id: str, status: str) -> None:

@@ -1193,3 +1193,77 @@ async def sandbox_chat(
 
     response = await handle_message(body.phone, body.message, dry_run=True)
     return {"phone": body.phone, "response": response}
+
+
+# ---- Trigger Call ----
+
+class TriggerCallRequest(BaseModel):
+    phone: str
+    business_name: str
+    business_phone: str
+    task: str
+    task_type: str = "information"
+    place_id: Optional[str] = None
+
+
+@router.post("/trigger-call")
+async def trigger_call(
+    body: TriggerCallRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Manually trigger an outbound call for a user. Bypasses payment gate."""
+    _check_admin(x_admin_password)
+    from app.services.auth import get_user
+    from app.services.calls import initiate_outbound_call
+
+    user = await get_user(body.phone)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {body.phone} not found")
+
+    try:
+        result = await initiate_outbound_call(
+            business_name=body.business_name,
+            business_phone=body.business_phone,
+            task=body.task,
+            user_id=body.phone,
+            task_type=body.task_type,
+            place_id=body.place_id,
+            user_name=user.get("name", ""),
+        )
+        return {
+            "status": "ok",
+            "call_log_id": result["call_log_id"],
+            "vapi_call_id": result["vapi_call_id"],
+            "call_status": result["status"],
+        }
+    except Exception as e:
+        logger.exception("Admin trigger-call failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Replay message ----
+
+class ReplayRequest(BaseModel):
+    phone: str
+    message: str
+
+
+@router.post("/replay")
+async def replay_message(
+    body: ReplayRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Replay a message through the orchestrator with payment gate bypassed.
+
+    Useful for re-triggering a paywalled request after payment.
+    """
+    _check_admin(x_admin_password)
+    from app.services.orchestrator import handle_message
+
+    response = await handle_message(
+        body.phone, body.message, is_free_tier=False, skip_payment_gate=True,
+    )
+    # Also send the SMS so the user sees it
+    if response:
+        await send_sms(body.phone, response)
+    return {"phone": body.phone, "response": response, "sms_sent": bool(response)}

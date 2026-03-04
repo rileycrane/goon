@@ -5,13 +5,10 @@ import json
 import logging
 from datetime import datetime
 
-import anthropic
-
 from app.db.database import db
+from app.services.llm import create as llm_create, extract_tool_use
 
 logger = logging.getLogger(__name__)
-
-JUDGE_MODEL = "claude-haiku-4-5-20251001"
 
 # ---- Judge tool schema for forced tool use ----
 
@@ -139,22 +136,16 @@ async def classify_message(
             f"Classify this message."
         )
 
-        client = anthropic.AsyncAnthropic()
-        resp = await client.messages.create(
-            model=JUDGE_MODEL,
-            max_tokens=512,
+        resp = await llm_create(
+            messages=[{"role": "user", "content": user_prompt}],
             system=JUDGE_SYSTEM_PROMPT,
             tools=[CLASSIFY_TOOL],
             tool_choice={"type": "tool", "name": "classify_requests"},
-            messages=[{"role": "user", "content": user_prompt}],
+            max_tokens=512,
+            tier="standard",
         )
 
-        # Extract the tool use result
-        classification = None
-        for block in resp.content:
-            if block.type == "tool_use" and block.name == "classify_requests":
-                classification = block.input
-                break
+        classification = extract_tool_use(resp, "classify_requests")
 
         if not classification:
             logger.warning("Judge returned no classification for user %s", user_id)
@@ -526,13 +517,7 @@ async def categorize_request(request_id: int, task_summary: str, task_type: str)
             )
         cat_context = "\n".join(cat_lines) if cat_lines else "(empty -- this is the first request)"
 
-        client = anthropic.AsyncAnthropic()
-        resp = await client.messages.create(
-            model=JUDGE_MODEL,
-            max_tokens=256,
-            system=CATEGORIZE_SYSTEM,
-            tools=[CATEGORIZE_TOOL],
-            tool_choice={"type": "tool", "name": "categorize_request"},
+        resp = await llm_create(
             messages=[{
                 "role": "user",
                 "content": (
@@ -541,13 +526,14 @@ async def categorize_request(request_id: int, task_summary: str, task_type: str)
                     f"Categorize this request."
                 ),
             }],
+            system=CATEGORIZE_SYSTEM,
+            tools=[CATEGORIZE_TOOL],
+            tool_choice={"type": "tool", "name": "categorize_request"},
+            max_tokens=256,
+            tier="standard",
         )
 
-        result = None
-        for block in resp.content:
-            if block.type == "tool_use" and block.name == "categorize_request":
-                result = block.input
-                break
+        result = extract_tool_use(resp, "categorize_request")
 
         if not result:
             return
