@@ -161,7 +161,14 @@ You can help them with anything they'd normally text you about:
             "endCallFunctionEnabled": True,
             "endCallMessage": "Alright, talk to you later!",
             "maxDurationSeconds": 300,
-            "serverUrl": f"{settings.base_url}/vapi/events",
+            "server": {
+                "url": f"{settings.base_url}/vapi/events",
+            },
+            "serverMessages": [
+                "end-of-call-report",
+                "status-update",
+                "tool-calls",
+            ],
         }
     }
 
