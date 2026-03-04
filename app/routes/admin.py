@@ -518,6 +518,16 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
 
+    # Delete in FK order: junction tables first, then leaf tables, then user
+    await db.execute(
+        "DELETE FROM request_messages WHERE message_log_id IN (SELECT id FROM message_log WHERE user_id = ?)",
+        [phone],
+    )
+    await db.execute(
+        "DELETE FROM requests WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)",
+        [phone],
+    )
+    await db.execute("DELETE FROM sessions WHERE user_id = ?", [phone])
     await db.execute("DELETE FROM message_log WHERE user_id = ?", [phone])
     await db.execute("DELETE FROM call_log WHERE user_id = ?", [phone])
     await db.execute("DELETE FROM scheduled_tasks WHERE user_id = ?", [phone])
