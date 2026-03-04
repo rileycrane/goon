@@ -131,7 +131,7 @@ async def update_subscription_status(phone: str, status: str) -> None:
     Valid statuses: free, trial, active, past_due, canceled.
     """
     await db.execute(
-        "UPDATE users SET subscription_status = ?, updated_at = CURRENT_TIMESTAMP WHERE phone = ?",
+        "UPDATE users SET subscription_status = ? WHERE phone = ?",
         [status, phone],
     )
 
