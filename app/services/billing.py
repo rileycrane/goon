@@ -20,32 +20,58 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.stripe_secret_key
 
 
+def _link_with_ref(base_url: str, phone: str) -> str:
+    """Append client_reference_id to a Stripe payment link URL."""
+    return f"{base_url}?client_reference_id={urllib.parse.quote(phone)}"
+
+
 def get_payment_url(phone: str) -> str | None:
-    """Return the Stripe Payment Link URL for a phone number, or None if not configured."""
+    """Return the legacy Stripe Payment Link URL, or None if not configured."""
     if not settings.stripe_payment_link_url:
         return None
-    return (
-        f"{settings.stripe_payment_link_url}"
-        f"?client_reference_id={urllib.parse.quote(phone)}"
-    )
+    return _link_with_ref(settings.stripe_payment_link_url, phone)
+
+
+def get_payment_options(phone: str) -> dict[str, str]:
+    """Return available payment links for a phone number.
+
+    Returns a dict with keys 'basic' and/or 'request', each mapping to a URL.
+    Falls back to legacy 'stripe_payment_link_url' if the new ones aren't set.
+    """
+    options: dict[str, str] = {}
+    if settings.stripe_payment_link_basic:
+        options["basic"] = _link_with_ref(settings.stripe_payment_link_basic, phone)
+    if settings.stripe_payment_link_request:
+        options["request"] = _link_with_ref(settings.stripe_payment_link_request, phone)
+    # Fallback to legacy single link
+    if not options and settings.stripe_payment_link_url:
+        options["basic"] = _link_with_ref(settings.stripe_payment_link_url, phone)
+    return options
 
 
 async def send_payment_link(phone: str) -> None:
-    """Send Stripe Payment Link URL via SMS with client_reference_id."""
+    """Send Stripe Payment Link URL(s) via SMS with client_reference_id."""
     from app.services.sms import send_sms
 
-    url = get_payment_url(phone)
-    if not url:
+    options = get_payment_options(phone)
+    if not options:
         await send_sms(
             phone,
             "Payment isn't set up yet. Hang tight -- we'll have it ready soon.",
         )
         return
 
-    await send_sms(
-        phone,
-        f"Here's your link to upgrade Hold Plz ($19.99/mo, 20 calls): {url}",
-    )
+    if "basic" in options and "request" in options:
+        await send_sms(
+            phone,
+            f"Two ways to use Hold Plz:\n"
+            f"Monthly ($9.99/mo): {options['basic']}\n"
+            f"Pay per request ($1): {options['request']}",
+        )
+    elif "basic" in options:
+        await send_sms(phone, f"Upgrade Hold Plz ($9.99/mo): {options['basic']}")
+    elif "request" in options:
+        await send_sms(phone, f"Pay per request ($1): {options['request']}")
 
 
 async def create_checkout_session(

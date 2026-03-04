@@ -40,6 +40,8 @@ class Settings:
     stripe_webhook_secret: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     stripe_price_id: str = os.getenv("STRIPE_PRICE_ID", "")
     stripe_payment_link_url: str = os.getenv("STRIPE_PAYMENT_LINK_URL", "")
+    stripe_payment_link_basic: str = os.getenv("STRIPE_PAYMENT_LINK_BASIC", "")
+    stripe_payment_link_request: str = os.getenv("STRIPE_PAYMENT_LINK_REQUEST", "")
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///data/goon.db")

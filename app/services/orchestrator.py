@@ -370,19 +370,22 @@ async def _execute_tool(
     """Execute a single tool call and return the result as a string."""
     # Call-intent paywall: free tier can see all tools but execution is gated
     if is_free_tier and tool_name in GATED_TOOLS:
-        from app.services.billing import get_payment_url
+        from app.services.billing import get_payment_options
         phone = user.get("phone", user.get("id", ""))
-        url = get_payment_url(phone)
-        if url:
-            return (
-                "This user is on the free tier. Calling requires a paid plan. "
-                f"Include this payment link in your response: {url} "
-                "($19.99/mo, 20 calls). Be warm, not salesy. Mention it once."
-            )
+        options = get_payment_options(phone)
+        if options:
+            parts = ["This user is on the free tier. Calling requires payment. "
+                      "Include these options in your response naturally:"]
+            if "basic" in options:
+                parts.append(f"- Monthly plan ($9.99/mo): {options['basic']}")
+            if "request" in options:
+                parts.append(f"- Pay per request ($1 per answered question): {options['request']}")
+            parts.append("Be warm, not salesy. Mention it once.")
+            return "\n".join(parts)
         return (
-            "This user is on the free tier. Calling requires a paid plan "
-            "($19.99/mo, 20 calls). Let them know payments aren't set up yet "
-            "but will be soon. Be warm, not salesy."
+            "This user is on the free tier. Calling requires a paid plan. "
+            "Let them know payments aren't set up yet but will be soon. "
+            "Be warm, not salesy."
         )
 
     try:
