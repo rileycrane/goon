@@ -114,6 +114,22 @@ async def _send_welcome_message(user: dict, was_upgrade: bool) -> None:
 
         plan_desc = "monthly plan ($9.99/mo, calls included)" if plan_type == "basic" else "pay-per-request plan ($1 per answered question)"
 
+        # Check if last inbound message was a call request that got paywalled
+        last_inbound = None
+        if recent_msgs:
+            for m in recent_msgs:
+                if m["direction"] == "in":
+                    last_inbound = m["body"]
+                    break
+
+        # Detect if the last outbound was a paywall response
+        has_paywalled_request = False
+        if recent_msgs:
+            for m in recent_msgs:
+                if m["direction"] == "out" and "buy.stripe.com" in (m.get("body") or ""):
+                    has_paywalled_request = True
+                    break
+
         client = anthropic.AsyncAnthropic()
         response = await client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -129,8 +145,9 @@ Rules:
 - Under 160 chars if possible, 320 max
 - No emoji, no markdown
 - Warm, casual, like a friend
-- If there's a pending request, acknowledge it and say you're picking it back up
+- If there's a pending request, say you're on it now (the system will automatically handle it)
 - If no pending request, welcome them and suggest something concrete they could try (restaurant reservation, checking business hours, etc.)
+- Do NOT say "calling now" -- say something like "on it" or "getting on that"
 - Don't be salesy or corporate
 - Sign off as Hold Plz only if it's a new user who hasn't interacted yet
 
@@ -141,12 +158,16 @@ Return ONLY the SMS text.""",
 
         await send_sms(phone, welcome_text)
 
-        # If there were pending requests from a gated call attempt, re-trigger them
-        if was_upgrade and pending_requests:
-            for req in pending_requests:
-                if req["task_type"] in ("reservation", "appointment", "custom_request"):
-                    # The user can just text again — the welcome message will prompt them
-                    pass
+        # Re-trigger the paywalled request through the orchestrator
+        if has_paywalled_request and last_inbound:
+            logger.info("Re-triggering paywalled request for %s: %s", phone, last_inbound[:80])
+            try:
+                from app.services.orchestrator import handle_message
+                result = await handle_message(phone, last_inbound, is_free_tier=False)
+                if result:
+                    await send_sms(phone, result)
+            except Exception:
+                logger.exception("Failed to re-trigger request for %s", phone)
 
     except Exception:
         logger.exception("Failed to send welcome message to %s", user.get("phone"))
