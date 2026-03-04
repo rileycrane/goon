@@ -296,12 +296,9 @@ async def initiate_outbound_call(
             "endCallFunctionEnabled": True,
             "endCallMessage": "thanks",
             "maxDurationSeconds": 180,
-            "serverUrl": server_url,
-            "serverMessages": [
-                "end-of-call-report",
-                "status-update",
-                "tool-calls",
-            ],
+            "server": {
+                "url": server_url,
+            },
             "recordingEnabled": settings.enable_call_recording,
         },
     }
