@@ -29,8 +29,8 @@ FALLBACK_MESSAGES = {
         "Reply YES to start or STOP to opt out."
     ),
     "welcome": (
-        "You're in. I'm Hold Plz -- text me a question about any business "
-        "and I'll find the answer or call them for you."
+        "You're in. Text me what you need -- restaurant reservations, "
+        "business hours, anything. I'll handle it."
     ),
     "already_active": (
         "You're already set up. Just text me directly -- "
@@ -78,7 +78,7 @@ Rules:
 - No emoji
 - Must sound like a real person, not a corporation
 - For confirmation_request: MUST include "reply YES to start" and "STOP to opt out"
-- For welcome: tell them what to do next (just text a question)
+- For welcome: tell them what to do next (just text a question). Do NOT repeat the intro pitch about what Hold Plz does -- they already know. Just confirm they're in and tell them to text you.
 - For ghosted: playful, not guilt-trippy
 - For nudge_reply: brief re-ask, relaxed
 

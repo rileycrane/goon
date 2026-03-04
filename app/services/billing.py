@@ -120,8 +120,27 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
         phone = session.get("client_reference_id", "")
     name = metadata.get("goon_name", "")
 
+    logger.info(
+        "handle_checkout_completed: phone=%s name=%s customer=%s client_ref=%s",
+        phone, name, customer_id, session.get("client_reference_id", ""),
+    )
+
     if not phone:
+        logger.warning("handle_checkout_completed: no phone found in session")
         return None, False
+
+    # Normalize phone — Stripe may URL-encode or strip the + prefix
+    import urllib.parse
+    phone = urllib.parse.unquote(phone)
+    if not phone.startswith("+"):
+        # Assume US number if 10-11 digits
+        digits = phone.lstrip("+")
+        if len(digits) == 10:
+            phone = f"+1{digits}"
+        elif len(digits) == 11 and digits.startswith("1"):
+            phone = f"+{digits}"
+        else:
+            phone = f"+{digits}"
 
     customer = stripe.Customer.retrieve(customer_id)
     email = customer.get("email", "")
@@ -135,9 +154,21 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
         await update_subscription_status(phone, "active")
         await set_stripe_customer_id(phone, customer_id)
         await reset_call_count(phone)
-        await db.execute(
-            "UPDATE users SET plan_type = ? WHERE id = ?", [plan_type, phone]
-        )
+        try:
+            await db.execute(
+                "UPDATE users SET plan_type = ? WHERE id = ?", [plan_type, phone]
+            )
+        except Exception:
+            logger.debug("plan_type column not yet available, skipping")
+        # Also store email if we got it from Stripe
+        if email:
+            try:
+                await db.execute(
+                    "UPDATE users SET email = ? WHERE id = ? AND (email IS NULL OR email = '')",
+                    [email, phone],
+                )
+            except Exception:
+                pass
         return await get_user(phone), was_free
 
     user = await create_user(
@@ -148,9 +179,12 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
         subscription_status="active",
     )
     await reset_call_count(phone)
-    await db.execute(
-        "UPDATE users SET plan_type = ? WHERE id = ?", [plan_type, phone]
-    )
+    try:
+        await db.execute(
+            "UPDATE users SET plan_type = ? WHERE id = ?", [plan_type, phone]
+        )
+    except Exception:
+        logger.debug("plan_type column not yet available, skipping")
     return user, False
 
 

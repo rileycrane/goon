@@ -44,9 +44,19 @@ async def stripe_webhook(
     event_type = event["type"]
     data = event["data"]["object"]
 
+    logger.info("Stripe webhook: event_type=%s id=%s", event_type, event.get("id", "?"))
+
     try:
         if event_type == "checkout.session.completed":
+            logger.info(
+                "Checkout completed: customer=%s client_ref=%s mode=%s",
+                data.get("customer"), data.get("client_reference_id"), data.get("mode"),
+            )
             user, was_upgrade = await handle_checkout_completed(data)
+            logger.info(
+                "Checkout result: user=%s was_upgrade=%s",
+                user.get("phone") if user else None, was_upgrade,
+            )
             if user:
                 asyncio.create_task(
                     _send_welcome_message(user, was_upgrade)
