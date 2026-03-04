@@ -23,6 +23,9 @@ async def test_schema_creates_all_tables(db):
     expected = {
         "users", "message_log", "call_log", "business_facts",
         "phone_scores", "ivr_maps", "scheduled_tasks", "unregistered_attempts",
+        "waitlist", "app_settings", "phone_start_attempts", "business_profiles",
+        "failure_log", "sessions", "requests", "request_messages",
+        "request_categories",
     }
     assert expected == tables
 
@@ -36,7 +39,7 @@ async def test_insert_and_fetch_user(db):
     user = await db.fetch_one("SELECT * FROM users WHERE phone = ?", ["+14155551234"])
     assert user is not None
     assert user["name"] == "Riley"
-    assert user["subscription_status"] == "trial"
+    assert user["subscription_status"] == "free"
 
 
 async def test_business_facts_upsert(db):
@@ -101,5 +104,13 @@ async def test_indexes_exist(db):
         "idx_business_facts_lookup", "idx_business_facts_expiry",
         "idx_phone_scores_lookup", "idx_scheduled_tasks_due",
         "idx_unregistered_phone", "idx_unregistered_created",
+        "idx_phone_start_phone", "idx_business_profiles_name",
+        "idx_failure_log_type", "idx_failure_log_severity",
+        "idx_failure_log_created", "idx_failure_log_resolved",
+        "idx_call_log_place_id", "idx_call_log_business",
+        "idx_sessions_user", "idx_sessions_user_business",
+        "idx_requests_session", "idx_requests_session_status",
+        "idx_requests_uncharged", "idx_request_messages_message",
+        "idx_waitlist_email",
     }
     assert expected == index_names

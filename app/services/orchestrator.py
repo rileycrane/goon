@@ -450,7 +450,18 @@ async def _execute_tool(
                 return f"Pre-call check FAILED: {issues_text}"
 
         elif tool_name == "call_business":
-            # Call quota check for paying users
+            # Payment method gate for request-plan users
+            user_plan = user.get("plan_type", "basic")
+            if user_plan == "request":
+                from app.services.billing import verify_payment_method
+                has_method = await verify_payment_method(user.get("id", user.get("phone", "")))
+                if not has_method:
+                    return (
+                        "This user is on the pay-per-request plan but has no payment method on file. "
+                        "Let them know they need to add a card before we can make calls. "
+                        "They can text 'pay' to update their payment info."
+                    )
+            # Call quota check for paying users (basic plan)
             if not await is_call_quota_available(user, settings.monthly_call_quota):
                 return (
                     f"Call quota reached ({settings.monthly_call_quota} calls/month). "

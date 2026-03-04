@@ -29,19 +29,21 @@ UPGRADE_KEYWORDS = re.compile(r"^(upgrade|pay|subscribe|billing)$", re.IGNORECAS
 
 async def _log_message(
     user_id: str, direction: str, body: str, twilio_sid: str | None = None
-) -> None:
-    """Append to message_log table."""
+) -> int | None:
+    """Append to message_log table. Returns the message_log id."""
     try:
-        await db.execute(
+        return await db.execute(
             "INSERT INTO message_log (user_id, direction, body, twilio_sid) VALUES (?, ?, ?, ?)",
             [user_id, direction, body, twilio_sid],
         )
     except Exception:
         logger.exception("Failed to log message for user %s", user_id)
+        return None
 
 
 async def _process_and_respond(
-    user_id: str, phone: str, body: str, is_free_tier: bool = False
+    user_id: str, phone: str, body: str, message_log_id: int | None = None,
+    is_free_tier: bool = False,
 ) -> None:
     """Run the orchestrator and send the response SMS.
 
@@ -67,6 +69,13 @@ async def _process_and_respond(
     except Exception:
         logger.exception("Failed to send response SMS to %s", phone)
     await _log_message(user_id, "out", response_text)
+
+    # Fire the judge to classify this message into sessions/requests
+    if message_log_id:
+        from app.services.judge import classify_message
+        asyncio.create_task(
+            classify_message(user_id, body, response_text, message_log_id)
+        )
 
 
 async def _send_payment_link(phone: str) -> None:
@@ -143,15 +152,20 @@ async def sms_webhook(request: Request) -> Response:
         return Response(content=TWIML_EMPTY, media_type="application/xml")
 
     # 8. Log inbound message
-    await _log_message(user["id"], "in", body, message_sid)
+    message_log_id = await _log_message(user["id"], "in", body, message_sid)
 
     # 9. Route by tier
     if tier == "active":
-        asyncio.create_task(_process_and_respond(user["id"], sender, body))
+        asyncio.create_task(
+            _process_and_respond(user["id"], sender, body, message_log_id=message_log_id)
+        )
     elif tier == "free":
         await increment_free_message_count(sender)
         asyncio.create_task(
-            _process_and_respond(user["id"], sender, body, is_free_tier=True)
+            _process_and_respond(
+                user["id"], sender, body, message_log_id=message_log_id,
+                is_free_tier=True,
+            )
         )
     else:
         asyncio.create_task(

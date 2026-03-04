@@ -126,12 +126,18 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
     customer = stripe.Customer.retrieve(customer_id)
     email = customer.get("email", "")
 
+    # Detect plan type from payment link used
+    plan_type = _detect_plan_type(session)
+
     existing = await get_user(phone)
     if existing:
         was_free = existing["subscription_status"] == "free"
         await update_subscription_status(phone, "active")
         await set_stripe_customer_id(phone, customer_id)
         await reset_call_count(phone)
+        await db.execute(
+            "UPDATE users SET plan_type = ? WHERE id = ?", [plan_type, phone]
+        )
         return await get_user(phone), was_free
 
     user = await create_user(
@@ -142,7 +148,35 @@ async def handle_checkout_completed(session: dict) -> tuple[dict | None, bool]:
         subscription_status="active",
     )
     await reset_call_count(phone)
+    await db.execute(
+        "UPDATE users SET plan_type = ? WHERE id = ?", [plan_type, phone]
+    )
     return user, False
+
+
+def _detect_plan_type(session: dict) -> str:
+    """Detect plan type from the Stripe checkout session.
+
+    Checks metadata first, then matches against known payment link IDs.
+    """
+    metadata = session.get("metadata", {})
+    if metadata.get("plan_type"):
+        return metadata["plan_type"]
+
+    # Match by payment link ID
+    payment_link = session.get("payment_link", "")
+    if payment_link:
+        from app.config.settings import settings as cfg
+        if cfg.stripe_payment_link_request and payment_link == cfg.stripe_payment_link_request.split("?")[0]:
+            return "request"
+        if cfg.stripe_payment_link_basic and payment_link == cfg.stripe_payment_link_basic.split("?")[0]:
+            return "basic"
+
+    # Check mode — subscription = basic, payment = request
+    mode = session.get("mode", "")
+    if mode == "payment":
+        return "request"
+    return "basic"
 
 
 async def handle_subscription_updated(subscription: dict) -> None:
@@ -175,6 +209,66 @@ async def handle_subscription_deleted(subscription: dict) -> None:
     user = await _get_user_by_stripe_id(customer_id)
     if user:
         await update_subscription_status(user["phone"], "canceled")
+
+
+async def charge_request(request_id: int, user_id: str) -> None:
+    """Charge $1.00 for a resolved request on the pay-per-use plan."""
+    user = await get_user(user_id)
+    if not user or not user.get("stripe_customer_id"):
+        logger.warning("Cannot charge request %d: no Stripe customer for %s", request_id, user_id)
+        return
+
+    try:
+        # Get default payment method
+        customer = stripe.Customer.retrieve(user["stripe_customer_id"])
+        payment_method = customer.get("invoice_settings", {}).get("default_payment_method")
+        if not payment_method:
+            # Try the first attached payment method
+            methods = stripe.PaymentMethod.list(
+                customer=user["stripe_customer_id"], type="card", limit=1,
+            )
+            if methods.data:
+                payment_method = methods.data[0].id
+            else:
+                logger.warning("No payment method for user %s, skipping charge", user_id)
+                return
+
+        intent = stripe.PaymentIntent.create(
+            amount=100,  # $1.00
+            currency="usd",
+            customer=user["stripe_customer_id"],
+            payment_method=payment_method,
+            off_session=True,
+            confirm=True,
+            description=f"Hold Plz request #{request_id}",
+            metadata={"request_id": str(request_id), "user_id": user_id},
+        )
+
+        await db.execute(
+            "UPDATE requests SET charged = TRUE, stripe_charge_id = ?, charged_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [intent.id, request_id],
+        )
+        logger.info("Charged $1.00 for request %d (pi: %s)", request_id, intent.id)
+
+    except stripe.CardError as e:
+        logger.warning("Card declined for request %d user %s: %s", request_id, user_id, e)
+    except Exception:
+        logger.exception("Failed to charge request %d", request_id)
+
+
+async def verify_payment_method(user_id: str) -> bool:
+    """Check if a user has a valid payment method on file."""
+    user = await get_user(user_id)
+    if not user or not user.get("stripe_customer_id"):
+        return False
+    try:
+        methods = stripe.PaymentMethod.list(
+            customer=user["stripe_customer_id"], type="card", limit=1,
+        )
+        return len(methods.data) > 0
+    except Exception:
+        logger.exception("Failed to verify payment method for %s", user_id)
+        return False
 
 
 async def _get_user_by_stripe_id(customer_id: str) -> dict | None:

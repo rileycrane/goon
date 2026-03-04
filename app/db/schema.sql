@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
     consent_state TEXT NOT NULL DEFAULT 'fresh',  -- fresh | confirmed | declined
     consent_sent_at TIMESTAMP,
     consent_confirmed_at TIMESTAMP,
-    timezone TEXT                      -- IANA timezone (e.g. America/New_York), NULL = America/Los_Angeles
+    timezone TEXT,                     -- IANA timezone (e.g. America/New_York), NULL = America/Los_Angeles
+    plan_type TEXT NOT NULL DEFAULT 'basic'  -- basic | request
 );
 
 CREATE TABLE IF NOT EXISTS message_log (
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS call_log (
     retry_count INTEGER NOT NULL DEFAULT 0,
     retry_after TIMESTAMP,
     duration_seconds INTEGER,
+    request_id INTEGER REFERENCES requests(id),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -133,6 +135,8 @@ CREATE TABLE IF NOT EXISTS business_profiles (
     known_contacts TEXT,       -- JSON: [{"name": "Maria", "role": "host"}]
     busy_patterns TEXT,        -- JSON
     notes TEXT,                -- LLM-generated insights
+    do_not_call BOOLEAN NOT NULL DEFAULT FALSE,  -- business asked not to be called
+    do_not_call_reason TEXT,
     first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -150,6 +154,55 @@ CREATE TABLE IF NOT EXISTS failure_log (
     resolved BOOLEAN NOT NULL DEFAULT FALSE,
     resolution_notes TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- A session is the ongoing relationship between a user and a business.
+-- One per (user, business) pair. Persists forever.
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    place_id TEXT,
+    business_name TEXT NOT NULL,
+    context TEXT,                              -- LLM-maintained session context (JSON or markdown)
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_activity_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, business_name)
+);
+
+-- A request is a specific task within a session. The billable unit.
+CREATE TABLE IF NOT EXISTS requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    task_summary TEXT NOT NULL,                -- judge's 1-line summary
+    task_type TEXT,                            -- information | reservation | appointment | availability_check | custom_request
+    status TEXT NOT NULL DEFAULT 'open',       -- open | pending_call | retry_pending | resolved | failed
+    billable BOOLEAN NOT NULL DEFAULT FALSE,
+    charged BOOLEAN NOT NULL DEFAULT FALSE,
+    stripe_charge_id TEXT,
+    resolution_method TEXT,                    -- cache | places | web | call
+    judge_reasoning TEXT,
+    category_id INTEGER REFERENCES request_categories(id),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP,
+    charged_at TIMESTAMP
+);
+
+-- Many-to-many: messages belong to requests (one message can spawn two requests)
+CREATE TABLE IF NOT EXISTS request_messages (
+    request_id INTEGER NOT NULL REFERENCES requests(id),
+    message_log_id INTEGER NOT NULL REFERENCES message_log(id),
+    PRIMARY KEY (request_id, message_log_id)
+);
+
+-- Living taxonomy of request categories, maintained by the judge
+CREATE TABLE IF NOT EXISTS request_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL UNIQUE,        -- e.g. "restaurant_reservation", "business_hours"
+    description TEXT,                      -- LLM-generated description of what this category covers
+    example_summaries TEXT,                -- JSON array of example task_summaries
+    count INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes
@@ -172,3 +225,9 @@ CREATE INDEX IF NOT EXISTS idx_failure_log_created ON failure_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_failure_log_resolved ON failure_log(resolved);
 CREATE INDEX IF NOT EXISTS idx_call_log_place_id ON call_log(place_id);
 CREATE INDEX IF NOT EXISTS idx_call_log_business ON call_log(business_name);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_business ON sessions(user_id, business_name);
+CREATE INDEX IF NOT EXISTS idx_requests_session ON requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_requests_session_status ON requests(session_id, status);
+CREATE INDEX IF NOT EXISTS idx_requests_uncharged ON requests(billable, charged);
+CREATE INDEX IF NOT EXISTS idx_request_messages_message ON request_messages(message_log_id);

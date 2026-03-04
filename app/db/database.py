@@ -77,6 +77,15 @@ class Database:
             "ALTER TABLE users ADD COLUMN consent_confirmed_at TIMESTAMP",
             # Timezone support
             "ALTER TABLE users ADD COLUMN timezone TEXT",
+            # Plan type for billing (basic = $9.99/mo, request = $1/request)
+            "ALTER TABLE users ADD COLUMN plan_type TEXT NOT NULL DEFAULT 'basic'",
+            # Link calls to requests
+            "ALTER TABLE call_log ADD COLUMN request_id INTEGER REFERENCES requests(id)",
+            # Link requests to taxonomy categories
+            "ALTER TABLE requests ADD COLUMN category_id INTEGER REFERENCES request_categories(id)",
+            # Business do-not-call flag
+            "ALTER TABLE business_profiles ADD COLUMN do_not_call BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE business_profiles ADD COLUMN do_not_call_reason TEXT",
         ]
         for sql in migrations:
             try:

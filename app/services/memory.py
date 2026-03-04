@@ -471,8 +471,48 @@ This file is mine to evolve. As I learn who I am for this person, I'll update it
         await f.write(initial)
 
 
+def _extract_protected_sections(soul_text: str) -> str:
+    """Extract the immutable sections (Boundaries, Values) from soul text."""
+    import re
+    protected = []
+    for section_name in ["Values", "Boundaries"]:
+        pattern = rf"(## {re.escape(section_name)}\n.*?)(?=\n## |\Z)"
+        match = re.search(pattern, soul_text, re.DOTALL)
+        if match:
+            protected.append(match.group(1).strip())
+    return "\n\n".join(protected)
+
+
+def _restore_protected_sections(updated: str, original: str) -> str:
+    """Replace the Values and Boundaries sections in updated with originals.
+
+    This ensures the LLM cannot rewrite the agent's values or boundaries.
+    """
+    import re
+    for section_name in ["Values", "Boundaries"]:
+        # Extract original section
+        orig_pattern = rf"(## {re.escape(section_name)}\n.*?)(?=\n## |\Z)"
+        orig_match = re.search(orig_pattern, original, re.DOTALL)
+        if not orig_match:
+            continue
+
+        # Replace in updated (or append if missing)
+        updated_pattern = rf"## {re.escape(section_name)}\n.*?(?=\n## |\Z)"
+        if re.search(updated_pattern, updated, re.DOTALL):
+            updated = re.sub(updated_pattern, orig_match.group(1).strip(), updated, flags=re.DOTALL)
+        else:
+            updated = updated.rstrip() + "\n\n" + orig_match.group(1).strip()
+
+    return updated
+
+
 async def update_soul_file(user_id: str, observation: str) -> str:
-    """Merge an observation into the user's SOUL.md via LLM."""
+    """Merge an observation into the user's SOUL.md via LLM.
+
+    The Values and Boundaries sections are immutable -- the LLM can update
+    the relationship model and personality adaptations, but cannot rewrite
+    the agent's core values or what it will/won't do.
+    """
     import anthropic
 
     user_dir = _user_dir(user_id)
@@ -497,7 +537,7 @@ New observation about how you should be for this user:
 {observation}
 
 Update the SOUL.md to incorporate this observation. Rules:
-- Preserve the core personality sections
+- DO NOT modify the "Values" or "Boundaries" sections -- these are immutable
 - Update the "About This Relationship" section with new insights
 - Add specific adaptations (e.g., "be more direct", "they like suggestions")
 - Keep it concise and actionable
@@ -511,6 +551,9 @@ Return ONLY the updated markdown.""",
     except Exception:
         logger.exception("Failed to update SOUL.md for user %s", user_id)
         return "Failed to update soul."
+
+    # Hard enforcement: restore original Values and Boundaries sections
+    updated = _restore_protected_sections(updated, current)
 
     try:
         async with aiofiles.open(soul_path, "w") as f:

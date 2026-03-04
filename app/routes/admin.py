@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from app.config import settings
@@ -61,6 +61,15 @@ async def admin_stats(
         "SELECT COUNT(*) as c FROM failure_log WHERE resolved = FALSE"
     )
 
+    sessions_total = await db.fetch_one("SELECT COUNT(*) as c FROM sessions")
+    requests_total = await db.fetch_one("SELECT COUNT(*) as c FROM requests")
+    requests_open = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM requests WHERE status IN ('open', 'pending_call', 'retry_pending')"
+    )
+    requests_billable_uncharged = await db.fetch_one(
+        "SELECT COUNT(*) as c FROM requests WHERE billable = TRUE AND charged = FALSE"
+    )
+
     recent_messages = await db.fetch_all(
         "SELECT * FROM message_log ORDER BY created_at DESC LIMIT 10"
     )
@@ -82,6 +91,14 @@ async def admin_stats(
         "messages": {
             "last_24h": msgs_24h["c"] if msgs_24h else 0,
             "last_7d": msgs_7d["c"] if msgs_7d else 0,
+        },
+        "sessions": {
+            "total": sessions_total["c"] if sessions_total else 0,
+        },
+        "requests": {
+            "total": requests_total["c"] if requests_total else 0,
+            "open": requests_open["c"] if requests_open else 0,
+            "billable_uncharged": requests_billable_uncharged["c"] if requests_billable_uncharged else 0,
         },
         "failures_active": failures_active["c"] if failures_active else 0,
         "recent_messages": recent_messages,
@@ -272,6 +289,94 @@ async def get_user_conversations(
         logger.exception("Failed to read conversations for %s", phone)
 
     return {"phone": phone, "conversations": messages[-limit:]}
+
+
+@router.get("/users/{phone}/conversations/text")
+async def get_user_conversations_text(
+    phone: str,
+    limit: int = Query(200, ge=1, le=2000),
+    x_admin_password: Optional[str] = Header(None),
+) -> Response:
+    """Conversation transcript with a copy-to-clipboard button.
+
+    Includes SMS messages and call results in chronological order.
+    Serves an HTML page with the transcript and a copy button.
+    """
+    _check_admin(x_admin_password)
+
+    user = await db.fetch_one("SELECT name, phone FROM users WHERE phone = ?", [phone])
+    name = user["name"] if user else phone
+
+    # Get messages from DB
+    messages = await db.fetch_all(
+        "SELECT direction, body, created_at FROM message_log WHERE user_id = ? ORDER BY created_at ASC LIMIT ?",
+        [phone, limit],
+    )
+
+    # Get calls interleaved
+    calls = await db.fetch_all(
+        "SELECT business_name, task, status, result, created_at, duration_seconds FROM call_log WHERE user_id = ? ORDER BY created_at ASC",
+        [phone],
+    )
+
+    # Merge into a single timeline
+    events: list[tuple[str, str]] = []
+    for msg in messages:
+        ts = msg["created_at"] or ""
+        if msg["direction"] == "in":
+            events.append((ts, f"[{ts}] {name}: {msg['body']}"))
+        else:
+            events.append((ts, f"[{ts}] Hold Plz: {msg['body']}"))
+
+    for call in calls:
+        ts = call["created_at"] or ""
+        status = call["status"] or "unknown"
+        dur = f" ({call['duration_seconds']}s)" if call.get("duration_seconds") else ""
+        line = f"[{ts}] --- Call to {call['business_name']}: {status}{dur}"
+        if call.get("result"):
+            line += f"\n         Result: {call['result']}"
+        events.append((ts, line))
+
+    events.sort(key=lambda e: e[0])
+
+    header = f"=== Hold Plz conversation with {name} ({phone}) ==="
+    transcript = header + "\n" + "\n".join(e[1] for e in events)
+
+    # Escape for HTML embedding
+    import html
+    escaped = html.escape(transcript)
+
+    page = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Transcript: {html.escape(name)} ({html.escape(phone)})</title>
+<style>
+  body {{ font-family: monospace; margin: 2rem; background: #1a1a1a; color: #e0e0e0; }}
+  #transcript {{ white-space: pre-wrap; padding: 1rem; background: #111; border-radius: 8px;
+                 border: 1px solid #333; max-height: 80vh; overflow-y: auto; }}
+  button {{ position: fixed; top: 1rem; right: 1rem; padding: 0.6rem 1.2rem;
+           font-size: 14px; font-family: monospace; cursor: pointer;
+           background: #2563eb; color: white; border: none; border-radius: 6px; }}
+  button:hover {{ background: #1d4ed8; }}
+  button.copied {{ background: #16a34a; }}
+</style>
+</head><body>
+<button onclick="copyTranscript()">Copy</button>
+<div id="transcript">{escaped}</div>
+<script>
+function copyTranscript() {{
+  const text = document.getElementById('transcript').innerText;
+  navigator.clipboard.writeText(text).then(() => {{
+    const btn = document.querySelector('button');
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => {{ btn.textContent = 'Copy'; btn.classList.remove('copied'); }}, 2000);
+  }});
+}}
+</script>
+</body></html>"""
+
+    return Response(content=page, media_type="text/html; charset=utf-8")
 
 
 @router.get("/users/{phone}/conversations/businesses")
@@ -533,6 +638,140 @@ async def trigger_reflect(
     return {"status": "ok", "phone": phone, "action": "reflect"}
 
 
+# ---- Sessions & Requests ----
+
+@router.get("/sessions")
+async def list_sessions(
+    user_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """List sessions, optionally filtered by user."""
+    _check_admin(x_admin_password)
+    if user_id:
+        rows = await db.fetch_all(
+            """SELECT s.*, COUNT(r.id) as request_count
+               FROM sessions s LEFT JOIN requests r ON r.session_id = s.id
+               WHERE s.user_id = ?
+               GROUP BY s.id ORDER BY s.last_activity_at DESC LIMIT ?""",
+            [user_id, limit],
+        )
+    else:
+        rows = await db.fetch_all(
+            """SELECT s.*, COUNT(r.id) as request_count
+               FROM sessions s LEFT JOIN requests r ON r.session_id = s.id
+               GROUP BY s.id ORDER BY s.last_activity_at DESC LIMIT ?""",
+            [limit],
+        )
+    return {"sessions": rows}
+
+
+@router.get("/sessions/{session_id}")
+async def get_session_detail(
+    session_id: int,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Session detail with all requests, linked messages, and calls."""
+    _check_admin(x_admin_password)
+    session = await db.fetch_one(
+        "SELECT * FROM sessions WHERE id = ?", [session_id]
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    requests = await db.fetch_all(
+        "SELECT * FROM requests WHERE session_id = ? ORDER BY created_at DESC",
+        [session_id],
+    )
+
+    # Attach messages and calls to each request
+    for req in requests:
+        messages = await db.fetch_all(
+            """SELECT m.* FROM message_log m
+               JOIN request_messages rm ON rm.message_log_id = m.id
+               WHERE rm.request_id = ? ORDER BY m.created_at""",
+            [req["id"]],
+        )
+        req["messages"] = messages
+
+        calls = await db.fetch_all(
+            "SELECT * FROM call_log WHERE request_id = ? ORDER BY created_at",
+            [req["id"]],
+        )
+        req["calls"] = calls
+
+    return {"session": session, "requests": requests}
+
+
+@router.get("/users/{phone}/sessions")
+async def get_user_sessions(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """All sessions for a user."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        """SELECT s.*, COUNT(r.id) as request_count
+           FROM sessions s LEFT JOIN requests r ON r.session_id = s.id
+           WHERE s.user_id = ?
+           GROUP BY s.id ORDER BY s.last_activity_at DESC""",
+        [phone],
+    )
+    return {"phone": phone, "sessions": rows}
+
+
+@router.get("/requests")
+async def list_requests(
+    status: Optional[str] = Query(None),
+    billable: Optional[bool] = Query(None),
+    charged: Optional[bool] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """List requests with optional filters."""
+    _check_admin(x_admin_password)
+    conditions = []
+    params: list = []
+    if status:
+        conditions.append("r.status = ?")
+        params.append(status)
+    if billable is not None:
+        conditions.append("r.billable = ?")
+        params.append(billable)
+    if charged is not None:
+        conditions.append("r.charged = ?")
+        params.append(charged)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = await db.fetch_all(
+        f"""SELECT r.*, s.user_id, s.business_name as session_business
+            FROM requests r JOIN sessions s ON r.session_id = s.id
+            {where} ORDER BY r.created_at DESC LIMIT ?""",
+        params + [limit],
+    )
+    return {"requests": rows}
+
+
+# ---- Request Taxonomy ----
+
+@router.get("/taxonomy")
+async def get_taxonomy(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """The living request taxonomy with counts and examples."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all(
+        "SELECT * FROM request_categories ORDER BY count DESC"
+    )
+    # Parse example_summaries JSON
+    for row in rows:
+        try:
+            row["example_summaries"] = json.loads(row.get("example_summaries") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            row["example_summaries"] = []
+    return {"categories": rows}
+
+
 # ---- SMS ----
 
 class SendSmsRequest(BaseModel):
@@ -634,6 +873,75 @@ async def get_business_calls(
         [place_id],
     )
     return {"place_id": place_id, "calls": rows}
+
+
+@router.get("/businesses/{place_id}/sessions")
+async def get_business_sessions(
+    place_id: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """All sessions across all users for a business (business-eye view)."""
+    _check_admin(x_admin_password)
+
+    sessions = await db.fetch_all(
+        """SELECT s.*, u.name as user_name, u.phone as user_phone,
+                  COUNT(r.id) as request_count,
+                  SUM(CASE WHEN r.status = 'resolved' THEN 1 ELSE 0 END) as resolved_count,
+                  SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) as failed_count
+           FROM sessions s
+           JOIN users u ON s.user_id = u.id
+           LEFT JOIN requests r ON r.session_id = s.id
+           WHERE s.place_id = ?
+           GROUP BY s.id ORDER BY s.last_activity_at DESC""",
+        [place_id],
+    )
+
+    # Also get aggregate call stats for this business
+    call_stats = await db.fetch_one(
+        """SELECT COUNT(*) as total_calls,
+                  SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful_calls,
+                  AVG(duration_seconds) as avg_duration
+           FROM call_log WHERE place_id = ?""",
+        [place_id],
+    )
+
+    return {
+        "place_id": place_id,
+        "sessions": sessions,
+        "call_stats": call_stats,
+    }
+
+
+class DoNotCallToggle(BaseModel):
+    do_not_call: bool
+    reason: Optional[str] = None
+
+
+@router.post("/businesses/{place_id}/do-not-call")
+async def toggle_do_not_call(
+    place_id: str,
+    body: DoNotCallToggle,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Toggle do-not-call flag for a business."""
+    _check_admin(x_admin_password)
+
+    profile = await db.fetch_one(
+        "SELECT * FROM business_profiles WHERE place_id = ?", [place_id]
+    )
+    if not profile:
+        raise HTTPException(status_code=404, detail="business profile not found")
+
+    await db.execute(
+        "UPDATE business_profiles SET do_not_call = ?, do_not_call_reason = ?, last_updated = CURRENT_TIMESTAMP WHERE place_id = ?",
+        [body.do_not_call, body.reason, place_id],
+    )
+    return {
+        "status": "ok",
+        "place_id": place_id,
+        "do_not_call": body.do_not_call,
+        "reason": body.reason,
+    }
 
 
 # ---- Failure Tracking ----

@@ -26,13 +26,14 @@ async def test_handle_checkout_completed_new_user(patch_dbs):
             "goon_name": "New User",
         },
     }
-    user = await billing.handle_checkout_completed(session)
+    user, was_upgrade = await billing.handle_checkout_completed(session)
 
     assert user is not None
     assert user["phone"] == "+14155559999"
     assert user["name"] == "New User"
     assert user["subscription_status"] == "active"
     assert user["stripe_customer_id"] == "cus_new"
+    assert not was_upgrade
 
 
 async def test_handle_checkout_completed_resubscribe(patch_dbs):
@@ -52,7 +53,7 @@ async def test_handle_checkout_completed_resubscribe(patch_dbs):
             "goon_name": "Returning",
         },
     }
-    user = await billing.handle_checkout_completed(session)
+    user, was_upgrade = await billing.handle_checkout_completed(session)
 
     assert user is not None
     assert user["subscription_status"] == "active"
@@ -62,7 +63,7 @@ async def test_handle_checkout_completed_resubscribe(patch_dbs):
 async def test_handle_checkout_completed_no_phone(patch_dbs):
     """Checkout with no phone in metadata returns None."""
     session = {"customer": "cus_x", "metadata": {}}
-    user = await billing.handle_checkout_completed(session)
+    user, _ = await billing.handle_checkout_completed(session)
     assert user is None
 
 

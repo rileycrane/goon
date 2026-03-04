@@ -38,6 +38,20 @@ async def pre_call_check(
         })
         return {"ok": False, "issues": issues}
 
+    # Check do-not-call flag
+    if place_id:
+        profile = await db.fetch_one(
+            "SELECT do_not_call, do_not_call_reason FROM business_profiles WHERE place_id = ?",
+            [place_id],
+        )
+        if profile and profile.get("do_not_call"):
+            reason = profile.get("do_not_call_reason") or "Business has asked not to be called."
+            issues.append({
+                "type": "do_not_call",
+                "message": reason,
+            })
+            return {"ok": False, "issues": issues}
+
     # Check phone score -- flag unreliable numbers
     if place_id:
         score = await get_phone_score(place_id, business_phone)

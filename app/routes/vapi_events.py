@@ -208,6 +208,17 @@ async def _handle_end_of_call(event: dict) -> None:
         except Exception:
             logger.exception("Failed to update phone score for call %s", call_id)
 
+    # Fire the judge to resolve the associated request
+    try:
+        from app.services.judge import resolve_request_from_call
+        import asyncio
+        is_final = not outcome.get("retry", False)
+        asyncio.create_task(
+            resolve_request_from_call(record["id"], outcome["success"], is_final)
+        )
+    except Exception:
+        logger.exception("Failed to fire resolve_request_from_call for call %s", call_id)
+
     if outcome["success"]:
         try:
             summary = await summarize_call_result(transcript, record["task"])
