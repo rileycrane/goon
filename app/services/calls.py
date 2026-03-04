@@ -97,6 +97,7 @@ def build_call_prompt(
     task_type: str,
     business_name: str,
     user_name: str,
+    user_phone: str = "",
     details: dict | None = None,
     ivr_map: dict | None = None,
 ) -> str:
@@ -120,8 +121,8 @@ You are calling **{business_name}**.
 **Task:** {task}
 
 **Caller identity:**
-- If they ask for a name, say "{user_name}"
-- If they ask for a callback number, say "{settings.goon_number}"
+- If they ask for a name: {f'say "{user_name}"' if user_name else 'just give the phone number instead'}
+- If they ask for a phone number or callback number, say "{user_phone or settings.goon_number}"
 - Do NOT say "I'm calling on behalf of" or "I'm an AI" or "I'm an assistant"
 
 ## IVR / Phone Tree Navigation
@@ -148,18 +149,19 @@ If you reach an automated phone system:
 1. Party size: {details.get('party_size', 'ask user')}
 2. Date: {details.get('date', 'ask user')}
 3. Time: {details.get('time', 'ask user')}
-4. Name: {user_name}
-5. If preferred time unavailable: ask what's available nearby and note it
+4. Name: {user_name or 'just give the phone number'}
+5. Phone: {user_phone or settings.goon_number}
+6. If preferred time unavailable: ask what's available nearby and note it
    (do NOT book a different time without user confirmation)
-6. Get confirmation number if they offer one
+7. Get confirmation number if they offer one
 """
     elif task_type == "appointment":
         base += f"""
 ## Appointment Details
 1. Service: {details.get('service', task)}
 2. Preferred date/time: {details.get('date', 'flexible')} {details.get('time', 'flexible')}
-3. Name: {user_name}
-4. If they need a phone number: {settings.goon_number}
+3. Name: {user_name or 'just give the phone number'}
+4. If they need a phone number: {user_phone or settings.goon_number}
 """
 
     return base
@@ -249,7 +251,8 @@ async def initiate_outbound_call(
         task=task,
         task_type=task_type,
         business_name=business_name,
-        user_name=user_name or "the customer",
+        user_name=user_name,
+        user_phone=user_id,
         details=details,
         ivr_map=ivr_map,
     )
@@ -294,6 +297,11 @@ async def initiate_outbound_call(
             "endCallMessage": "thanks",
             "maxDurationSeconds": 180,
             "serverUrl": server_url,
+            "serverMessages": [
+                "end-of-call-report",
+                "status-update",
+                "tool-calls",
+            ],
             "recordingEnabled": settings.enable_call_recording,
         },
     }
