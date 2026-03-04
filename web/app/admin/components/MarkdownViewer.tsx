@@ -99,8 +99,6 @@ export default function MarkdownViewer({ content }: { content: string }) {
         border: "1px solid var(--border)",
         borderRadius: "8px",
         padding: "16px 20px",
-        maxHeight: "500px",
-        overflow: "auto",
       }}
     >
       {elements}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,8 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db.database import db
 from app.services.auth import get_signups_enabled, set_signups_enabled
+from app.services.memory import distill_memory, load_memory, reflect
+from app.services.sms import send_sms, calculate_segments
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +402,179 @@ async def toggle_allowlist(
     return {"status": "ok", "phone": phone, "allowlisted": body.allowlisted}
 
 
+@router.delete("/users/{phone}")
+async def delete_user(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Permanently delete a user and all associated data."""
+    _check_admin(x_admin_password)
+    user = await db.fetch_one("SELECT * FROM users WHERE phone = ?", [phone])
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    await db.execute("DELETE FROM message_log WHERE user_id = ?", [phone])
+    await db.execute("DELETE FROM call_log WHERE user_id = ?", [phone])
+    await db.execute("DELETE FROM scheduled_tasks WHERE user_id = ?", [phone])
+    await db.execute("DELETE FROM users WHERE id = ?", [phone])
+
+    user_dir = USER_DATA_DIR / phone
+    if user_dir.exists():
+        shutil.rmtree(user_dir)
+
+    return {"status": "ok", "phone": phone, "deleted": True}
+
+
+@router.post("/users/{phone}/reset")
+async def reset_user(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Wipe user data but keep the account record."""
+    _check_admin(x_admin_password)
+    user = await db.fetch_one("SELECT * FROM users WHERE phone = ?", [phone])
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    await db.execute("DELETE FROM message_log WHERE user_id = ?", [phone])
+    await db.execute("DELETE FROM call_log WHERE user_id = ?", [phone])
+    await db.execute("DELETE FROM scheduled_tasks WHERE user_id = ?", [phone])
+    await db.execute(
+        "UPDATE users SET free_messages_used = 0, calls_used_this_period = 0 WHERE id = ?",
+        [phone],
+    )
+
+    user_dir = USER_DATA_DIR / phone
+    if user_dir.exists():
+        shutil.rmtree(user_dir)
+
+    return {"status": "ok", "phone": phone, "reset": True}
+
+
+VALID_TIERS = {"free", "active", "trial", "canceled", "past_due", "pending_consent"}
+VALID_CONSENT_STATES = {"fresh", "confirmed", "declined"}
+
+
+class SetConsentRequest(BaseModel):
+    state: str
+
+
+@router.post("/users/{phone}/consent")
+async def set_consent_state(
+    phone: str,
+    body: SetConsentRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Set a user's consent_state directly."""
+    _check_admin(x_admin_password)
+    if body.state not in VALID_CONSENT_STATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid state '{body.state}', must be one of: {', '.join(sorted(VALID_CONSENT_STATES))}",
+        )
+    user = await db.fetch_one("SELECT * FROM users WHERE phone = ?", [phone])
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    await db.execute(
+        "UPDATE users SET consent_state = ?, consent_sent_at = NULL, consent_confirmed_at = NULL WHERE phone = ?",
+        [body.state, phone],
+    )
+    return {"status": "ok", "phone": phone, "consent_state": body.state}
+
+
+class SetTierRequest(BaseModel):
+    tier: str
+
+
+@router.post("/users/{phone}/tier")
+async def set_user_tier(
+    phone: str,
+    body: SetTierRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Set a user's subscription_status directly."""
+    _check_admin(x_admin_password)
+    if body.tier not in VALID_TIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid tier '{body.tier}', must be one of: {', '.join(sorted(VALID_TIERS))}",
+        )
+    user = await db.fetch_one("SELECT * FROM users WHERE phone = ?", [phone])
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    await db.execute(
+        "UPDATE users SET subscription_status = ? WHERE phone = ?",
+        [body.tier, phone],
+    )
+    return {"status": "ok", "phone": phone, "tier": body.tier}
+
+
+@router.post("/users/{phone}/memory/distill")
+async def trigger_distill(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Trigger distill_memory() for a user (LLM call, may take 10-30s)."""
+    _check_admin(x_admin_password)
+    await distill_memory(phone)
+    return {"status": "ok", "phone": phone, "action": "distill_memory"}
+
+
+@router.post("/users/{phone}/memory/reflect")
+async def trigger_reflect(
+    phone: str,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Trigger reflect() for a user (multiple LLM calls, may take 30-60s)."""
+    _check_admin(x_admin_password)
+    await reflect(phone)
+    return {"status": "ok", "phone": phone, "action": "reflect"}
+
+
+# ---- SMS ----
+
+class SendSmsRequest(BaseModel):
+    to: str
+    body: str
+
+
+@router.post("/sms/send")
+async def admin_send_sms(
+    body: SendSmsRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Send an SMS via Twilio (test/debug)."""
+    _check_admin(x_admin_password)
+    segments = calculate_segments(body.body)
+    await send_sms(body.to, body.body)
+    return {"status": "ok", "to": body.to, "segments": segments}
+
+
+# ---- Messages ----
+
+@router.get("/messages")
+async def list_messages(
+    user_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Query message_log with optional filters."""
+    _check_admin(x_admin_password)
+    if user_id:
+        rows = await db.fetch_all(
+            "SELECT * FROM message_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            [user_id, limit],
+        )
+    else:
+        rows = await db.fetch_all(
+            "SELECT * FROM message_log ORDER BY created_at DESC LIMIT ?",
+            [limit],
+        )
+    return {"messages": rows}
+
+
 # ---- Business Intelligence ----
 
 @router.get("/businesses")
@@ -576,3 +752,126 @@ async def get_signups_status(
     _check_admin(x_admin_password)
     enabled = await get_signups_enabled()
     return {"signups_enabled": enabled}
+
+
+class TestModeToggle(BaseModel):
+    enabled: bool
+
+
+@router.get("/settings/test-mode")
+async def get_test_mode(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Get current test_mode status."""
+    _check_admin(x_admin_password)
+    row = await db.fetch_one(
+        "SELECT value FROM app_settings WHERE key = 'test_mode'"
+    )
+    enabled = row["value"] == "true" if row else False
+    return {"test_mode": enabled}
+
+
+@router.post("/settings/test-mode")
+async def toggle_test_mode(
+    body: TestModeToggle,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Toggle test_mode setting."""
+    _check_admin(x_admin_password)
+    await db.execute(
+        """INSERT INTO app_settings (key, value, updated_at)
+           VALUES ('test_mode', ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP""",
+        [str(body.enabled).lower()],
+    )
+    return {"status": "ok", "test_mode": body.enabled}
+
+
+@router.get("/settings")
+async def get_all_settings(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Dump all app_settings rows."""
+    _check_admin(x_admin_password)
+    rows = await db.fetch_all("SELECT * FROM app_settings ORDER BY key")
+    return {"settings": rows}
+
+
+# ---- Prompts Management ----
+
+SOUL_MD_PATH = Path(__file__).parent.parent / "prompts" / "soul.md"
+
+
+@router.get("/prompts/soul")
+async def get_soul_prompt(
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return raw soul.md content."""
+    _check_admin(x_admin_password)
+    content = ""
+    try:
+        content = SOUL_MD_PATH.read_text()
+    except Exception:
+        logger.exception("Failed to read soul.md")
+    return {"content": content}
+
+
+class UpdateSoulRequest(BaseModel):
+    content: str
+
+
+@router.put("/prompts/soul")
+async def update_soul_prompt(
+    body: UpdateSoulRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Overwrite soul.md and reload the cached version."""
+    _check_admin(x_admin_password)
+    try:
+        SOUL_MD_PATH.write_text(body.content)
+        from app.prompts.soul import reload
+        reload()
+    except Exception:
+        logger.exception("Failed to write soul.md")
+        raise HTTPException(status_code=500, detail="Failed to save soul.md")
+    return {"status": "ok"}
+
+
+@router.get("/prompts/system")
+async def get_rendered_system_prompt(
+    phone: str = Query(...),
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Return the fully rendered system prompt for a specific user."""
+    _check_admin(x_admin_password)
+    from app.services.auth import get_user
+    from app.services.orchestrator import build_system_prompt
+
+    user = await get_user(phone)
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    memory = await load_memory(phone)
+    is_free = user.get("subscription_status") == "free"
+    prompt = build_system_prompt(user, memory, is_free_tier=is_free)
+    return {"phone": phone, "system_prompt": prompt}
+
+
+# ---- Sandbox Chat ----
+
+class SandboxRequest(BaseModel):
+    phone: str
+    message: str
+
+
+@router.post("/sandbox")
+async def sandbox_chat(
+    body: SandboxRequest,
+    x_admin_password: Optional[str] = Header(None),
+) -> dict:
+    """Chat as a user without storing anything. Dry-run orchestrator."""
+    _check_admin(x_admin_password)
+    from app.services.orchestrator import handle_message
+
+    response = await handle_message(body.phone, body.message, dry_run=True)
+    return {"phone": body.phone, "response": response}

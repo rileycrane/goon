@@ -7,8 +7,9 @@ import MarkdownViewer from "../../components/MarkdownViewer";
 import ConversationView from "../../components/ConversationView";
 import CallCard from "../../components/CallCard";
 import StatsCard from "../../components/StatsCard";
+import SandboxChat from "../../components/SandboxChat";
 
-const TABS = ["Overview", "Soul", "User", "Memory", "Playbook", "Conversations", "Calls"];
+const TABS = ["Overview", "Soul", "User", "Memory", "Playbook", "Conversations", "Calls", "Sandbox"];
 
 export default function UserDetailPage() {
   const params = useParams();
@@ -213,6 +214,8 @@ export default function UserDetailPage() {
           )}
         </div>
       )}
+
+      {tab === "Sandbox" && <SandboxChat phone={phone} />}
     </div>
   );
 }

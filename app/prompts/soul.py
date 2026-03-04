@@ -15,6 +15,12 @@ def _load() -> str:
     return _soul_text
 
 
+def reload() -> None:
+    """Force reload of soul.md from disk. Called after admin edits."""
+    global _soul_text
+    _soul_text = None
+
+
 def _extract_sections(text: str, headings: list[str]) -> str:
     """Extract named ## sections from the soul document."""
     parts: list[str] = []

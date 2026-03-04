@@ -5,6 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import anthropic
 
@@ -252,6 +253,19 @@ class OrchestratorResult:
     call_plan: dict | None = None
 
 
+DEFAULT_TZ = "America/Los_Angeles"
+
+
+def _user_now(user: dict) -> datetime:
+    """Return the current time in the user's timezone."""
+    tz_name = user.get("timezone") or DEFAULT_TZ
+    try:
+        tz = ZoneInfo(tz_name)
+    except (KeyError, Exception):
+        tz = ZoneInfo(DEFAULT_TZ)
+    return datetime.now(tz)
+
+
 # ---- System prompt builder ----
 
 def build_system_prompt(
@@ -293,7 +307,7 @@ User has {calls_remaining} calls remaining this billing period (of {quota}).
 ---
 
 You are texting with {name} (phone: {phone}).
-Today: {datetime.now().isoformat()}
+Today: {_user_now(user).isoformat()}
 
 {RESOLUTION_LADDER_INSTRUCTION}
 {free_tier_section}
@@ -356,13 +370,19 @@ async def _execute_tool(
     """Execute a single tool call and return the result as a string."""
     # Call-intent paywall: free tier can see all tools but execution is gated
     if is_free_tier and tool_name in GATED_TOOLS:
-        from app.services.billing import send_payment_link
+        from app.services.billing import get_payment_url
         phone = user.get("phone", user.get("id", ""))
-        asyncio.create_task(send_payment_link(phone))
+        url = get_payment_url(phone)
+        if url:
+            return (
+                "This user is on the free tier. Calling requires a paid plan. "
+                f"Include this payment link in your response: {url} "
+                "($19.99/mo, 20 calls). Be warm, not salesy. Mention it once."
+            )
         return (
-            "This requires calling the business. A payment link was just sent. "
-            "Let the user know you'd love to make this call, and they can text "
-            "'pay' or use the link to upgrade ($19.99/mo, 20 calls)."
+            "This user is on the free tier. Calling requires a paid plan "
+            "($19.99/mo, 20 calls). Let them know payments aren't set up yet "
+            "but will be soon. Be warm, not salesy."
         )
 
     try:
@@ -547,13 +567,17 @@ async def _build_business_context(user_id: str, message: str, memory) -> str:
 # ---- Public API ----
 
 async def handle_message(
-    user_id: str, message: str, is_free_tier: bool = False
+    user_id: str, message: str, is_free_tier: bool = False,
+    dry_run: bool = False,
 ) -> str:
     """Process a user message through the resolution ladder.
 
     Called by the SMS webhook. Loads user + memory, runs the Claude
     tool-calling loop, persists memory updates, and returns the
     response text to send back via SMS.
+
+    If dry_run=True, skips all side effects (no SMS, no memory writes,
+    no task creation). Used by admin sandbox.
     """
     # Load user record and memory
     user = await get_user(user_id)
@@ -653,8 +677,9 @@ async def handle_message(
             pass
 
     # Persist memory (conversation + any LLM-generated updates)
-    asyncio.create_task(
-        update_memory(user_id, message, result_text, memory_updates or None)
-    )
+    if not dry_run:
+        asyncio.create_task(
+            update_memory(user_id, message, result_text, memory_updates or None)
+        )
 
     return result_text

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiofiles
@@ -198,7 +198,7 @@ async def append_conversation(
     user_dir.mkdir(parents=True, exist_ok=True)
 
     entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "direction": direction,
         "text": text,
     }
@@ -218,10 +218,10 @@ async def append_daily_log(user_id: str, note: str) -> None:
     memory_dir = user_dir / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     log_path = memory_dir / f"{today}.md"
 
-    timestamp = datetime.now().strftime("%H:%M")
+    timestamp = datetime.now(timezone.utc).strftime("%H:%M")
     line = f"- [{timestamp}] {note}\n"
 
     try:
@@ -414,7 +414,7 @@ async def add_task(user_id: str, description: str, trigger: str = "") -> dict:
         "description": description,
         "trigger": trigger,
         "status": "pending",
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     tasks.append(task)
     await save_tasks(user_id, tasks)
@@ -427,7 +427,7 @@ async def complete_task(user_id: str, task_id: int) -> bool:
     for task in tasks:
         if task.get("id") == task_id:
             task["status"] = "completed"
-            task["completed_at"] = datetime.now().isoformat()
+            task["completed_at"] = datetime.now(timezone.utc).isoformat()
             await save_tasks(user_id, tasks)
             return True
     return False

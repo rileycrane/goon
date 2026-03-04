@@ -4,6 +4,10 @@ import re
 from app.config import settings
 
 GSM_PATTERN = re.compile(r'^[\x20-\x7E\n\r]*$')
+_MD_BOLD = re.compile(r'\*\*(.+?)\*\*')
+_MD_ITALIC = re.compile(r'\*(.+?)\*')
+_MD_HEADER = re.compile(r'^#{1,3}\s+', re.MULTILINE)
+_MD_BULLET = re.compile(r'^[-*]\s+', re.MULTILINE)
 
 
 def calculate_segments(body: str) -> int:
@@ -13,6 +17,15 @@ def calculate_segments(body: str) -> int:
         return 1 if len(body) <= 160 else -(-len(body) // 153)
     else:
         return 1 if len(body) <= 70 else -(-len(body) // 67)
+
+
+def strip_markdown(text: str) -> str:
+    """Remove markdown formatting that slips through the LLM. Safety net."""
+    text = _MD_BOLD.sub(r'\1', text)
+    text = _MD_ITALIC.sub(r'\1', text)
+    text = _MD_HEADER.sub('', text)
+    text = _MD_BULLET.sub('', text)
+    return text
 
 
 def strip_emoji(text: str) -> str:
@@ -47,7 +60,8 @@ def split_at_sentences(text: str, max_chars: int = 460) -> list[str]:
 
 
 async def send_sms(to: str, body: str) -> None:
-    """Send SMS, splitting if needed. Avoids emoji to stay in GSM encoding."""
+    """Send SMS, splitting if needed. Strips markdown and emoji to stay in GSM encoding."""
+    body = strip_markdown(body)
     body = strip_emoji(body)
 
     if len(body) <= 480:

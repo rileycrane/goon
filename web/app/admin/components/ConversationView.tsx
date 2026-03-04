@@ -19,8 +19,6 @@ export default function ConversationView({
         display: "flex",
         flexDirection: "column",
         gap: "6px",
-        maxHeight: "500px",
-        overflow: "auto",
         padding: "8px",
       }}
     >

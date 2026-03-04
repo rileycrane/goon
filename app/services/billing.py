@@ -20,22 +20,28 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.stripe_secret_key
 
 
+def get_payment_url(phone: str) -> str | None:
+    """Return the Stripe Payment Link URL for a phone number, or None if not configured."""
+    if not settings.stripe_payment_link_url:
+        return None
+    return (
+        f"{settings.stripe_payment_link_url}"
+        f"?client_reference_id={urllib.parse.quote(phone)}"
+    )
+
+
 async def send_payment_link(phone: str) -> None:
     """Send Stripe Payment Link URL via SMS with client_reference_id."""
     from app.services.sms import send_sms
 
-    if not settings.stripe_payment_link_url:
+    url = get_payment_url(phone)
+    if not url:
         await send_sms(
             phone,
             "Payment isn't set up yet. Hang tight -- we'll have it ready soon.",
         )
         return
 
-    # Append client_reference_id so webhook can identify the phone
-    url = (
-        f"{settings.stripe_payment_link_url}"
-        f"?client_reference_id={urllib.parse.quote(phone)}"
-    )
     await send_sms(
         phone,
         f"Here's your link to upgrade Hold Plz ($19.99/mo, 20 calls): {url}",

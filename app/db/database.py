@@ -75,6 +75,8 @@ class Database:
             "ALTER TABLE users ADD COLUMN consent_state TEXT NOT NULL DEFAULT 'confirmed'",
             "ALTER TABLE users ADD COLUMN consent_sent_at TIMESTAMP",
             "ALTER TABLE users ADD COLUMN consent_confirmed_at TIMESTAMP",
+            # Timezone support
+            "ALTER TABLE users ADD COLUMN timezone TEXT",
         ]
         for sql in migrations:
             try:
