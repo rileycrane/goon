@@ -163,7 +163,7 @@ Return ONLY the SMS text.""",
             logger.info("Re-triggering paywalled request for %s: %s", phone, last_inbound[:80])
             try:
                 from app.services.orchestrator import handle_message
-                result = await handle_message(phone, last_inbound, is_free_tier=False)
+                result = await handle_message(phone, last_inbound, is_free_tier=False, skip_payment_gate=True)
                 if result:
                     await send_sms(phone, result)
             except Exception:

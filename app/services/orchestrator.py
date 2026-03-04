@@ -371,6 +371,7 @@ async def _execute_tool(
     user: dict,
     memory_updates: list[dict],
     is_free_tier: bool = False,
+    skip_payment_gate: bool = False,
 ) -> str:
     """Execute a single tool call and return the result as a string."""
     # Call-intent paywall: free tier can see all tools but execution is gated
@@ -455,17 +456,18 @@ async def _execute_tool(
                 return f"Pre-call check FAILED: {issues_text}"
 
         elif tool_name == "call_business":
-            # Payment method gate for request-plan users
-            user_plan = user.get("plan_type", "basic")
-            if user_plan == "request":
-                from app.services.billing import verify_payment_method
-                has_method = await verify_payment_method(user.get("id", user.get("phone", "")))
-                if not has_method:
-                    return (
-                        "This user is on the pay-per-request plan but has no payment method on file. "
-                        "Let them know they need to add a card before we can make calls. "
-                        "They can text 'pay' to update their payment info."
-                    )
+            # Payment method gate for request-plan users (skip if just paid)
+            if not skip_payment_gate:
+                user_plan = user.get("plan_type", "basic")
+                if user_plan == "request":
+                    from app.services.billing import verify_payment_method
+                    has_method = await verify_payment_method(user.get("id", user.get("phone", "")))
+                    if not has_method:
+                        return (
+                            "This user is on the pay-per-request plan but has no payment method on file. "
+                            "Let them know they need to add a card before we can make calls. "
+                            "They can text 'pay' to update their payment info."
+                        )
             # Call quota check for paying users (basic plan)
             if not await is_call_quota_available(user, settings.monthly_call_quota):
                 return (
@@ -610,6 +612,7 @@ def _fix_payment_urls(text: str, phone: str) -> str:
 async def handle_message(
     user_id: str, message: str, is_free_tier: bool = False,
     dry_run: bool = False,
+    skip_payment_gate: bool = False,
 ) -> str:
     """Process a user message through the resolution ladder.
 
@@ -682,14 +685,15 @@ async def handle_message(
             result = await _execute_tool(
                 block.name, block.input, user, memory_updates,
                 is_free_tier=is_free_tier,
+                skip_payment_gate=skip_payment_gate,
             )
 
             # Capture call plan only if call_business actually succeeded
-            if block.name == "call_business" and "Tool error" not in result:
+            if block.name == "call_business" and "Call initiated" in result:
                 call_plan = block.input
                 logger.info("Call initiated for %s: %s", user_id, result[:100])
             elif block.name == "call_business":
-                logger.warning("call_business failed for %s: %s", user_id, result[:200])
+                logger.warning("call_business blocked/failed for %s: %s", user_id, result[:200])
 
             tool_results.append({
                 "type": "tool_result",
