@@ -684,9 +684,12 @@ async def handle_message(
                 is_free_tier=is_free_tier,
             )
 
-            # Capture call plan if call_business was invoked
-            if block.name == "call_business":
+            # Capture call plan only if call_business actually succeeded
+            if block.name == "call_business" and "Tool error" not in result:
                 call_plan = block.input
+                logger.info("Call initiated for %s: %s", user_id, result[:100])
+            elif block.name == "call_business":
+                logger.warning("call_business failed for %s: %s", user_id, result[:200])
 
             tool_results.append({
                 "type": "tool_result",

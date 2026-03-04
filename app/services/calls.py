@@ -298,6 +298,10 @@ async def initiate_outbound_call(
         },
     }
 
+    logger.info(
+        "Initiating Vapi call: biz=%s phone=%s user=%s url=%s",
+        business_name, business_phone, user_id, f"{VAPI_BASE}/call/phone",
+    )
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -308,8 +312,9 @@ async def initiate_outbound_call(
                 },
                 json=payload,
             )
+            logger.info("Vapi response: status=%s", resp.status_code)
             if resp.status_code >= 400:
-                logger.error("Vapi API error: %s %s", resp.status_code, resp.text)
+                logger.error("Vapi API error: %s %s", resp.status_code, resp.text[:500])
             resp.raise_for_status()
             call_data = resp.json()
     except httpx.TimeoutException:
