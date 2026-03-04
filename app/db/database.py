@@ -86,6 +86,8 @@ class Database:
             # Business do-not-call flag
             "ALTER TABLE business_profiles ADD COLUMN do_not_call BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE business_profiles ADD COLUMN do_not_call_reason TEXT",
+            # Timestamp for tracking recent status changes (e.g. payment verification)
+            "ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         ]
         for sql in migrations:
             try:

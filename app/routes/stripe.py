@@ -126,33 +126,35 @@ async def _retrigger_paywalled_request(user: dict) -> None:
 
     try:
         recent_msgs = await db.fetch_all(
-            "SELECT direction, body FROM message_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 5",
+            "SELECT direction, body FROM message_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
             [phone],
         )
         if not recent_msgs:
             return
 
-        # Find last inbound message
-        last_inbound = None
+        # Walk newest-first: find the paywall outbound (contains buy.stripe.com),
+        # then find the first inbound BEFORE it that's longer than 5 chars
+        # (skip "Y", "yes", "pay" etc which are consent/payment replies)
+        paywalled_body = None
+        found_paywall = False
         for m in recent_msgs:
-            if m["direction"] == "in":
-                last_inbound = m["body"]
-                break
+            if not found_paywall:
+                if m["direction"] == "out" and "buy.stripe.com" in (m.get("body") or ""):
+                    found_paywall = True
+            else:
+                if m["direction"] == "in":
+                    body = (m.get("body") or "").strip()
+                    if len(body) > 5:
+                        paywalled_body = body
+                        break
 
-        # Detect if the last outbound was a paywall response
-        has_paywalled_request = False
-        for m in recent_msgs:
-            if m["direction"] == "out" and "buy.stripe.com" in (m.get("body") or ""):
-                has_paywalled_request = True
-                break
-
-        if not has_paywalled_request or not last_inbound:
+        if not paywalled_body:
             return
 
-        logger.info("Re-triggering paywalled request for %s: %s", phone, last_inbound[:80])
+        logger.info("Re-triggering paywalled request for %s: %s", phone, paywalled_body[:80])
         from app.services.orchestrator import handle_message
         result = await handle_message(
-            phone, last_inbound, is_free_tier=False, skip_payment_gate=True,
+            phone, paywalled_body, is_free_tier=False, skip_payment_gate=True,
         )
         if result:
             await send_sms(phone, result)

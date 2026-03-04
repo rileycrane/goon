@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS users (
     consent_sent_at TIMESTAMP,
     consent_confirmed_at TIMESTAMP,
     timezone TEXT,                     -- IANA timezone (e.g. America/New_York), NULL = America/Los_Angeles
-    plan_type TEXT NOT NULL DEFAULT 'basic'  -- basic | request
+    plan_type TEXT NOT NULL DEFAULT 'basic',  -- basic | request
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS message_log (

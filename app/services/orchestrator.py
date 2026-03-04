@@ -457,22 +457,16 @@ async def _execute_tool(
                 return f"Pre-call check FAILED: {issues_text}"
 
         elif tool_name == "call_business":
-            # Payment method gate for request-plan users (skip if just paid)
+            # Payment gate: re-fetch user in case Stripe webhook fired since message start
             if not skip_payment_gate:
-                user_plan = user.get("plan_type", "basic")
-                if user_plan == "request":
-                    from app.services.billing import verify_payment_method
-                    user_phone = user.get("id", user.get("phone", ""))
-                    has_method = await verify_payment_method(user_phone)
-                    # Also check if the user paid recently (Payment Links don't save cards)
-                    if not has_method:
-                        has_method = await _has_recent_payment(user_phone)
-                    if not has_method:
-                        return (
-                            "This user is on the pay-per-request plan but has no payment method on file. "
-                            "Let them know they need to add a card before we can make calls. "
-                            "They can text 'pay' to update their payment info."
-                        )
+                fresh_user = await get_user(user.get("id", user.get("phone", "")))
+                if fresh_user:
+                    user = fresh_user
+                if user.get("subscription_status") != "active" and not user.get("allowlisted"):
+                    return (
+                        "This user hasn't completed payment yet. "
+                        "Let them know they need to subscribe before we can make calls."
+                    )
             # Call quota check for paying users (basic plan)
             if not await is_call_quota_available(user, settings.monthly_call_quota):
                 return (
@@ -588,38 +582,6 @@ async def _build_business_context(user_id: str, message: str, memory) -> str:
     except Exception:
         logger.exception("Failed to build business context")
         return ""
-
-
-async def _has_recent_payment(user_id: str) -> bool:
-    """Check if user made a payment in the last 30 minutes.
-
-    Payment Links don't save cards, so verify_payment_method returns False
-    even after a successful $1 payment. This checks the billing event log
-    (subscription_status change to 'active') as a proxy.
-    """
-    try:
-        recent = await db.fetch_one(
-            """SELECT 1 FROM users
-               WHERE id = ? AND subscription_status = 'active'
-                 AND updated_at > datetime('now', '-30 minutes')""",
-            [user_id],
-        )
-        if recent:
-            return True
-        # Also check if there was a recent Stripe checkout message in message_log
-        # (the welcome message or payment link response)
-        recent_checkout = await db.fetch_one(
-            """SELECT 1 FROM message_log
-               WHERE user_id = ? AND direction = 'out'
-                 AND body LIKE '%you''re all set%'
-                 AND created_at > datetime('now', '-30 minutes')
-               LIMIT 1""",
-            [user_id],
-        )
-        return recent_checkout is not None
-    except Exception:
-        logger.exception("Failed to check recent payment for %s", user_id)
-        return False
 
 
 def _fix_payment_urls(text: str, phone: str) -> str:
