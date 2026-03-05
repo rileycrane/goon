@@ -68,7 +68,6 @@ async def _process_and_respond(
         await send_sms(phone, response_text)
     except Exception:
         logger.exception("Failed to send response SMS to %s", phone)
-    await _log_message(user_id, "out", response_text)
 
     # Fire the judge to classify this message into sessions/requests
     if message_log_id:

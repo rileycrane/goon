@@ -60,7 +60,10 @@ def split_at_sentences(text: str, max_chars: int = 460) -> list[str]:
 
 
 async def send_sms(to: str, body: str) -> None:
-    """Send SMS, splitting if needed. Strips markdown and emoji to stay in GSM encoding."""
+    """Send SMS, splitting if needed. Strips markdown and emoji to stay in GSM encoding.
+
+    Also logs outbound messages to message_log so all SMS appear in admin dashboard.
+    """
     body = strip_markdown(body)
     body = strip_emoji(body)
 
@@ -70,6 +73,17 @@ async def send_sms(to: str, body: str) -> None:
         chunks = split_at_sentences(body, max_chars=460)
         for chunk in chunks:
             await _send(to, chunk)
+
+    # Log outbound message
+    try:
+        from app.db.database import db
+        await db.execute(
+            "INSERT INTO message_log (user_id, direction, body) VALUES (?, 'out', ?)",
+            [to, body],
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Failed to log outbound SMS to %s", to)
 
 
 async def _send(to: str, body: str) -> None:

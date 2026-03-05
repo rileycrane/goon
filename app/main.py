@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db.database import db, init_db
 from app.routes import admin, register, sms, stripe, vapi_events, voice
-from app.services.calls import process_retries
+from app.services.calls import cleanup_stale_calls, process_retries
 from app.services.proactive import run_proactive_checks
 from app.services.scheduler import process_queued_calls
 
@@ -54,9 +54,13 @@ async def lifespan(app: FastAPI):
             name="proactive-scheduler",
         )
     )
+    async def _cleanup_then_retry():
+        await cleanup_stale_calls()
+        await process_retries()
+
     _background_tasks.append(
         asyncio.create_task(
-            _periodic(process_retries, RETRY_CHECK_INTERVAL, "retries"),
+            _periodic(_cleanup_then_retry, RETRY_CHECK_INTERVAL, "retries"),
             name="retry-scheduler",
         )
     )

@@ -401,7 +401,8 @@ async def _ensure_call_status_updated(call_id: str, status: str) -> None:
     """Ensure call_log status is updated on terminal status events.
 
     If we receive an 'ended' or 'failed' status-update but the end-of-call-report
-    hasn't arrived (or was lost), this prevents calls from staying in_progress forever.
+    hasn't arrived (or was lost), this marks the call so it doesn't stay
+    in_progress forever.
     """
     record = await db.fetch_one(
         "SELECT status FROM call_log WHERE vapi_call_id = ?", [call_id],
@@ -410,10 +411,14 @@ async def _ensure_call_status_updated(call_id: str, status: str) -> None:
         logger.warning("Status update for unknown call_id=%s status=%s", call_id, status)
         return
     if record["status"] == "in_progress":
+        new_status = f"failed_{status}"
         logger.info(
-            "Call %s got status=%s while still in_progress, "
-            "waiting for end-of-call-report before updating",
-            call_id, status,
+            "Call %s got terminal status=%s while still in_progress, updating to %s",
+            call_id, status, new_status,
+        )
+        await db.execute(
+            "UPDATE call_log SET status=? WHERE vapi_call_id=?",
+            [new_status, call_id],
         )
 
 

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 VAPI_BASE = "https://api.vapi.ai"
 MAX_RETRIES = 2
+STALE_CALL_TIMEOUT_MINUTES = 15
 
 
 async def pre_call_check(
@@ -198,14 +199,19 @@ def build_first_message(task: str, task_type: str, details: dict | None = None) 
 async def check_duplicate_call(user_id: str, business_phone: str) -> dict | None:
     """Check if there's already an in-progress call for this user+business.
 
+    Ignores calls older than STALE_CALL_TIMEOUT_MINUTES so stale calls
+    (e.g. from missed webhooks) don't block new attempts forever.
+
     Returns the existing call record if found, None otherwise.
     """
+    cutoff = (datetime.now() - timedelta(minutes=STALE_CALL_TIMEOUT_MINUTES)).isoformat()
     record = await db.fetch_one(
         """
         SELECT * FROM call_log
         WHERE user_id = ? AND business_phone = ? AND status = 'in_progress'
+          AND created_at > ?
         """,
-        [user_id, business_phone],
+        [user_id, business_phone, cutoff],
     )
     return record
 
@@ -503,3 +509,32 @@ async def process_retries() -> int:
             logger.exception("Retry failed for call %s", record["vapi_call_id"])
 
     return count
+
+
+async def cleanup_stale_calls() -> int:
+    """Mark in_progress calls older than STALE_CALL_TIMEOUT_MINUTES as failed_timeout.
+
+    Returns number of calls cleaned up.
+    """
+    cutoff = (datetime.now() - timedelta(minutes=STALE_CALL_TIMEOUT_MINUTES)).isoformat()
+    stale = await db.fetch_all(
+        """
+        SELECT id, vapi_call_id, business_name, user_id FROM call_log
+        WHERE status = 'in_progress' AND created_at <= ?
+        """,
+        [cutoff],
+    )
+    if not stale:
+        return 0
+
+    for record in stale:
+        try:
+            await db.execute(
+                "UPDATE call_log SET status='failed_timeout' WHERE id=?",
+                [record["id"]],
+            )
+        except Exception:
+            logger.exception("Failed to mark stale call %s as timed out", record.get("vapi_call_id"))
+
+    logger.info("Cleaned up %d stale in_progress calls", len(stale))
+    return len(stale)
