@@ -15,6 +15,7 @@ dependencies = [
     "pydantic-settings>=2.7",
     "stripe>=11",
     "python-multipart>=0.0.18",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]

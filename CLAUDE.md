@@ -7,7 +7,14 @@ You text or call a single phone number. It answers questions about businesses,
 calls businesses on your behalf using an AI voice agent, makes reservations,
 and remembers your preferences. No app, no humans in the loop.
 
-## Architecture Docs (Read These First)
+## Decision Log (READ THIS FIRST — EVERY SESSION)
+
+**`docs/decisions.md`** — Tracks what's been tried, what failed, what's decided.
+READ THIS FILE before making any infrastructure or config changes. If something
+is listed under "do NOT retry", do not suggest it. Update this file after every
+significant fix, failed approach, or architecture decision.
+
+## Architecture Docs
 
 - `docs/goon-product-document.md` — Component decomposition, interfaces, convoy plan
 - `docs/goon-blueprint.md` — Full technical spec with code, schemas, API details
@@ -73,36 +80,33 @@ goon/
 5. **Cache everything** — every fact learned gets stored with expiry timers.
 6. **Test mode** — ENABLE_TEST_BUSINESSES flag routes fake businesses to your phone for testing.
 
-## Current Status (as of 2026-03-04)
+## Current Status (as of 2026-03-14)
 
 **Deployed to production on Railway.** Live at `https://api.holdplz.ai`.
-Currently in **integration testing** — the full circuit (SMS → payment →
-call → webhook → SMS result) is being debugged end-to-end.
+Full circuit is **working end-to-end**: SMS → payment → call → webhook → SMS result.
 
 See `docs/changelog.md` for detailed bug-by-bug progress.
+See `docs/2026-03-04-state.md` for a snapshot of how the implementation differs from the original design docs.
 
 ### What's working
 - SMS send/receive via Twilio
 - Stripe payment flow (both $9.99/mo subscription and $1/request Payment Links)
 - User registration via web + SMS consent
 - Orchestrator + resolution ladder (cache → places → web → call)
-- Outbound calls via Vapi (call is placed, voice agent talks)
+- Outbound calls via Vapi (call placed, voice agent talks, result delivered)
+- Vapi webhook delivery (via Railway direct domain, bypassing Cloudflare)
 - Admin dashboard + CLI
 - LLM model fallback (Haiku → Sonnet cascade)
 - Memory system (per-user markdown files + JSONL logs)
 - Sessions/requests data model + LLM judge
-
-### What's being tested
-- **Vapi webhook delivery** — `serverMessages` fix deployed, awaiting confirmation
-  that `end-of-call-report` arrives and triggers SMS result to user
-- **Full circuit**: text request → call → result SMS (blocked on webhook fix)
+- Stale call cleanup (15-min timeout, background sweep)
+- All outbound SMS logged to message_log
 
 ### What needs to happen next
-1. Confirm Vapi webhooks arrive (test another call)
-2. Get the full circuit working end-to-end reliably
-3. Polish voice prompts based on transcript review
-4. Stress test with multiple concurrent users
-5. Invite friends for v0 validation
+1. Polish voice prompts based on transcript review
+2. Stress test with multiple concurrent users
+3. Fix test suite (5 failures in test_sms_webhook.py, 1 in test_calls.py)
+4. Invite friends for v0 validation
 
 ## CLI (`scripts/cli.py`)
 
